@@ -1,0 +1,11 @@
+# Reverse Muse - Monorepo Configuration
+
+[workspace]
+members = [
+    "packages/shared",
+    "packages/domain",
+    "apps/backend",
+]
+
+[workspace.dependencies]
+python = "^3.10"

@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bubble-bg: rgba(59, 130, 246, 0.95);
+  --bubble-text: white;
+  --bubble-border: rgba(59, 130, 246, 0.3);
+}
