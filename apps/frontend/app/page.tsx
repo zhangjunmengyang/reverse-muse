@@ -1,28 +1,77 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { BookOpen, ArrowRight, Ghost } from 'lucide-react';
+
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          Reverse Muse
-        </h1>
-        <p className="text-lg text-gray-600">
-          AI-Powered Reading Companion
-        </p>
-        <div className="mt-8 space-y-4">
-          <a
-            href="/reading"
-            className="block px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+    <div className="min-h-screen flex flex-col">
+      {/* Hero Section */}
+      <main className="flex-1 flex items-center justify-center px-6">
+        <div className="max-w-2xl mx-auto text-center">
+          {/* Logo */}
+          <div
+            className={`
+              inline-flex items-center justify-center w-20 h-20 rounded-2xl
+              bg-[var(--ghost-bg)] border border-[var(--ghost-border)]
+              mb-8 animate-ghost-float
+              ${mounted ? 'opacity-100' : 'opacity-0'}
+              transition-opacity duration-700
+            `}
           >
-            开始阅读
-          </a>
-          <a
-            href="/api/health"
-            className="block text-gray-600 hover:text-gray-900"
+            <Ghost className="w-10 h-10 text-[var(--accent-secondary)]" />
+          </div>
+
+          {/* Title */}
+          <h1
+            className={`
+              font-display text-5xl md:text-6xl font-semibold tracking-tight mb-4
+              ${mounted ? 'animate-slide-up' : 'opacity-0'}
+            `}
           >
-            API 健康检查
-          </a>
+            <span className="text-gradient">Reverse Muse</span>
+          </h1>
+
+          {/* Subtitle */}
+          <p
+            className={`
+              text-xl text-[var(--text-secondary)] mb-12 max-w-lg mx-auto
+              ${mounted ? 'animate-slide-up stagger-1' : 'opacity-0'}
+            `}
+          >
+            AI-powered paper reading companion with contextual insights
+          </p>
+
+          {/* Action Button */}
+          <div
+            className={`
+              flex justify-center
+              ${mounted ? 'animate-slide-up stagger-2' : 'opacity-0'}
+            `}
+          >
+            <Link
+              href="/reading"
+              className="btn btn-primary text-lg px-8 py-4 group"
+            >
+              <BookOpen className="w-5 h-5" />
+              <span>Enter</span>
+              <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+            </Link>
+          </div>
         </div>
-      </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="py-6 text-center text-[var(--text-muted)] text-sm">
+        <p>Select text while reading to get AI-generated insights</p>
+      </footer>
     </div>
   );
 }

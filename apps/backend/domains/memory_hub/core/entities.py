@@ -7,7 +7,7 @@ Defines memory chunks and their relationships to user's reading history.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 
 class MemorySource(Enum):

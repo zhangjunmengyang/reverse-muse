@@ -4,7 +4,6 @@ Tests for ReadingContextService domain service
 
 from apps.backend.domains.reading_hub.core.entities import (
     ReadingContext,
-    TriggerType,
 )
 from apps.backend.domains.reading_hub.services.domain_service import (
     ReadingContextService,

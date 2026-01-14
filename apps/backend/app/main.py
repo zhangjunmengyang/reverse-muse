@@ -2,8 +2,6 @@
 FastAPI Application Entry Point
 """
 
-import asyncio
-import os
 from contextlib import asynccontextmanager
 
 import structlog
@@ -15,7 +13,6 @@ from apps.backend.app.core.config import get_settings
 from apps.backend.app.routes.v1 import router as v1_router
 from apps.backend.infrastructure.db.connection import (
     close_db,
-    get_db,
     initialize_schema,
 )
 

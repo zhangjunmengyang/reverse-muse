@@ -1,0 +1,24 @@
+services:
+  # SurrealDB 数据库
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    container_name: reverse-muse-db
+    ports:
+      - "8000:8000"
+    command: start --user root --pass root file:/data/database.db --log info
+    volumes:
+      - ./data/surrealdb:/data
+    networks:
+      - reverse-muse
+    restart: unless-stopped
+    healthcheck:
+      # SurrealDB 镜像内无 curl，使用 /surreal isready 检查
+      test: ["CMD", "/surreal", "isready", "--endpoint", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  reverse-muse:
+    driver: bridge

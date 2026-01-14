@@ -2,7 +2,11 @@
 Tests for MemoryChunkService domain service
 """
 
-from apps.backend.domains.memory_hub.core.entities import MemorySource
+from apps.backend.domains.memory_hub.core.entities import (
+    MemoryChunk,
+    MemoryMetadata,
+    MemorySource,
+)
 from apps.backend.domains.memory_hub.services.domain_service import (
     MemoryChunkService,
 )
@@ -54,8 +58,6 @@ def test_filter_by_paper(sample_paper_id):
     """Test filtering chunks by paper ID"""
     service = MemoryChunkService()
 
-    from apps.backend.domains.memory_hub.core.entities import MemoryMetadata
-
     chunks = [
         MemoryChunk(
             id="1",
@@ -89,8 +91,6 @@ def test_filter_has_embedding():
     """Test filtering chunks that have embeddings"""
     service = MemoryChunkService()
 
-    from apps.backend.domains.memory_hub.core.entities import MemoryMetadata
-
     chunks = [
         MemoryChunk(
             id="1",
@@ -117,8 +117,6 @@ def test_filter_has_embedding():
 def test_get_top_accessed():
     """Test getting most frequently accessed chunks"""
     service = MemoryChunkService()
-
-    from apps.backend.domains.memory_hub.core.entities import MemoryMetadata
 
     chunks = [
         MemoryChunk(

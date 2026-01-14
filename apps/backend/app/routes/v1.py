@@ -4,13 +4,23 @@ API V1 Routes
 Routes for reading sessions, insights, and PDF management.
 """
 
-import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pathlib import Path
 from typing import Optional
 
+import fitz
+import structlog
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from apps.backend.app.core.config import get_settings
 from apps.backend.app.schemas.common import (
     InsightResponse,
     InsightsListResponse,
+    LoadPaperRequest,
+    LoadPaperResponse,
+    PaperContentResponse,
+    PaperInfo,
+    PaperLibraryResponse,
     PDFMetadata,
     PDFUploadResponse,
     ReadingContextResponse,
@@ -18,17 +28,20 @@ from apps.backend.app.schemas.common import (
     UserActionCreate,
     UserActionResponse,
 )
-from apps.backend.app.core.config import get_settings
+from apps.backend.domains.insight_hub.services.domain_service import (
+    InsightGenerationService,
+)
 from apps.backend.domains.insight_hub.use_cases.generate_insight import (
     GenerateInsightUseCase,
 )
-from apps.backend.domains.insight_hub.port.repository import InsightRepository
-from apps.backend.domains.memory_hub.port.repository import MemoryChunkRepository
-from apps.backend.domains.memory_hub.core.entities import MemoryChunk
+from apps.backend.domains.memory_hub.core.entities import MemoryChunk, MemoryMetadata
 from apps.backend.domains.reading_hub.core.entities import (
-    ReadingContext,
+    ReadingPosition as DomainReadingPosition,
     TriggerType,
     UserAction,
+)
+from apps.backend.domains.reading_hub.services.domain_service import (
+    ReadingContextService,
 )
 from apps.backend.domains.reading_hub.use_cases.record_user_action import (
     RecordUserActionUseCase,
@@ -36,27 +49,43 @@ from apps.backend.domains.reading_hub.use_cases.record_user_action import (
 from apps.backend.domains.reading_hub.use_cases.start_reading_session import (
     StartReadingSessionUseCase,
 )
-from apps.backend.domains.reading_hub.port.repository import (
-    ReadingContextRepository,
-)
-from apps.backend.domains.reading_hub.services.domain_service import (
-    ReadingContextService,
-)
-from apps.backend.domains.insight_hub.services.domain_service import (
-    InsightGenerationService,
-)
 from apps.backend.infrastructure.db import (
-    SurrealReadingContextRepository,
-    SurrealMemoryChunkRepository,
     SurrealInsightRepository,
+    SurrealMemoryChunkRepository,
+    SurrealReadingContextRepository,
 )
+from apps.backend.infrastructure.embedding import get_embedding_service
 from apps.backend.infrastructure.llm import get_llm_service
 from apps.backend.infrastructure.pdf import get_pdf_service
-from apps.backend.infrastructure.db.connection import get_db
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 settings = get_settings()
+
+# Paper Library path from settings
+PAPER_LIBRARY_PATH = settings.paper_library_dir
+
+
+def get_library_pdf_path(paper_id: str) -> Path:
+    """Get the PDF path for a library paper, raising 404 if not found."""
+    if not PAPER_LIBRARY_PATH:
+        raise HTTPException(status_code=404, detail="Paper library not configured")
+    pdf_path = PAPER_LIBRARY_PATH / f"{paper_id}.pdf"
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found in library")
+    return pdf_path
+
+
+def read_pdf_metadata(pdf_path: Path) -> dict:
+    """Read PDF metadata from a file path."""
+    doc = fitz.open(pdf_path)
+    metadata = {
+        "title": doc.metadata.get("title") or pdf_path.stem,
+        "author": doc.metadata.get("author"),
+        "page_count": len(doc),
+    }
+    doc.close()
+    return metadata
 
 
 async def get_dependencies():
@@ -74,6 +103,7 @@ async def get_dependencies():
     # Services
     llm_service = get_llm_service()
     pdf_service = get_pdf_service()
+    embedding_service = get_embedding_service()
 
     # Domain services
     context_service = ReadingContextService()
@@ -100,6 +130,7 @@ async def get_dependencies():
         "insight_repo": insight_repo,
         "llm_service": llm_service,
         "pdf_service": pdf_service,
+        "embedding_service": embedding_service,
         "context_service": context_service,
         "insight_use_case": insight_use_case,
         "start_reading_use_case": start_reading_use_case,
@@ -166,10 +197,18 @@ async def record_user_action(
         # Convert trigger_type string to enum
         trigger_type = TriggerType(action_request.trigger_type)
 
+        # Convert schema ReadingPosition to domain ReadingPosition
+        domain_reading_position = DomainReadingPosition(
+            paper_id=action_request.reading_position.paper_id,
+            page_number=action_request.reading_position.page_number,
+            bbox=action_request.reading_position.bbox,
+            text_snippet=action_request.reading_position.text_snippet,
+        )
+
         # Create UserAction domain object
         action = UserAction(
             trigger_type=trigger_type,
-            reading_position=action_request.reading_position,
+            reading_position=domain_reading_position,
             selected_text=action_request.selected_text,
             context_text=action_request.context_text,
             duration_seconds=action_request.duration_seconds,
@@ -200,8 +239,15 @@ async def record_user_action(
         logger.error("Invalid trigger type", error=str(e))
         raise HTTPException(status_code=400, detail=f"Invalid trigger type: {e}")
     except Exception as e:
-        logger.error("Failed to record user action", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        error_str = str(e)
+        logger.error("Failed to record user action", error=error_str)
+
+        # Handle rate limit errors gracefully - return success without insight
+        if "429" in error_str or "rate" in error_str.lower() or "limit" in error_str.lower():
+            logger.warning("Rate limited, returning without insight")
+            return UserActionResponse(action_recorded=True, insight=None)
+
+        raise HTTPException(status_code=500, detail=error_str)
 
 
 @router.get("/insights/{context_id}", response_model=InsightsListResponse)
@@ -248,7 +294,9 @@ async def upload_pdf(
     deps: dict = Depends(get_dependencies),
 ):
     """
-    Upload a PDF file and extract metadata.
+    Upload a PDF file, extract text, and generate embeddings.
+
+    Phase 1 升级：为每个文本块生成 OpenAI Embedding，支持语义搜索。
 
     Args:
         file: PDF file to upload
@@ -259,6 +307,7 @@ async def upload_pdf(
     """
     pdf_service = deps["pdf_service"]
     memory_repo = deps["memory_repo"]
+    embedding_service = deps["embedding_service"]
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -300,24 +349,28 @@ async def upload_pdf(
             user_id=actual_user_id,
         )
 
-        # Save chunks to repository
-        for chunk_data in chunks_data:
+        # Generate embeddings for all chunks (batch processing)
+        logger.info("Generating embeddings for chunks", count=len(chunks_data))
+        chunk_texts = [c["content"] for c in chunks_data]
+        embeddings = await embedding_service.embed_batch(chunk_texts)
+
+        # Save chunks with embeddings to repository
+        for i, chunk_data in enumerate(chunks_data):
+            chunk_metadata = MemoryMetadata(
+                paper_id=paper_id,
+                paper_title=metadata.get("title", file.filename),
+                page_number=chunk_data["page_number"],
+            )
             chunk = MemoryChunk(
                 user_id=actual_user_id,
-                paper_id=paper_id,
                 content=chunk_data["content"],
-                paper_title=metadata.get("title", file.filename),
-                metadata={
-                    "page_number": chunk_data["page_number"],
-                    "chunk_index": chunk_data["chunk_index"],
-                    "start_char": chunk_data["start_char"],
-                    "end_char": chunk_data["end_char"],
-                },
+                embedding=embeddings[i],
+                metadata=chunk_metadata,
             )
             await memory_repo.save(chunk)
 
         logger.info(
-            "PDF uploaded and processed",
+            "PDF uploaded with embeddings",
             paper_id=paper_id,
             page_count=metadata.get("page_count", 0),
             chunk_count=len(chunks_data),
@@ -328,7 +381,7 @@ async def upload_pdf(
             filename=file.filename,
             page_count=metadata.get("page_count", 0),
             chunk_count=len(chunks_data),
-            message=f"PDF uploaded successfully. Extracted {len(chunks_data)} text chunks.",
+            message=f"PDF uploaded successfully. Extracted {len(chunks_data)} text chunks with embeddings.",
         )
     except HTTPException:
         raise
@@ -342,15 +395,7 @@ async def get_pdf_metadata(
     paper_id: str,
     deps: dict = Depends(get_dependencies),
 ):
-    """
-    Get metadata for a PDF by paper_id.
-
-    Args:
-        paper_id: Paper ID
-
-    Returns:
-        PDFMetadata with title, author, page_count, created_at
-    """
+    """Get metadata for a PDF by paper_id."""
     pdf_service = deps["pdf_service"]
     logger.info("Getting PDF metadata", paper_id=paper_id)
 
@@ -359,21 +404,12 @@ async def get_pdf_metadata(
         if not pdf_path:
             raise HTTPException(status_code=404, detail="PDF not found")
 
-        import fitz
-        doc = fitz.open(pdf_path)
-        metadata = {
-            "title": doc.metadata.get("title"),
-            "author": doc.metadata.get("author"),
-            "page_count": len(doc),
-            "created_at": None,  # Would need to fetch from repository
-        }
-        doc.close()
-
+        metadata = read_pdf_metadata(pdf_path)
         return PDFMetadata(
             title=metadata["title"],
             author=metadata["author"],
             page_count=metadata["page_count"],
-            created_at=metadata["created_at"] or "Unknown",
+            created_at=None,
             updated_at=None,
         )
     except HTTPException:
@@ -381,3 +417,154 @@ async def get_pdf_metadata(
     except Exception as e:
         logger.error("Failed to get PDF metadata", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/library/papers", response_model=PaperLibraryResponse)
+async def list_library_papers():
+    """List all papers available in the paper library folder."""
+    if not PAPER_LIBRARY_PATH or not PAPER_LIBRARY_PATH.exists():
+        logger.warning("Paper library path not configured or does not exist")
+        return PaperLibraryResponse(papers=[], total=0)
+
+    papers = []
+    for pdf_file in PAPER_LIBRARY_PATH.glob("*.pdf"):
+        try:
+            metadata = read_pdf_metadata(pdf_file)
+            papers.append(PaperInfo(
+                paper_id=pdf_file.stem,
+                filename=pdf_file.name,
+                title=metadata["title"],
+                author=metadata["author"],
+                page_count=metadata["page_count"],
+                file_path=str(pdf_file),
+            ))
+        except Exception as e:
+            logger.warning("Failed to read PDF", file=str(pdf_file), error=str(e))
+
+    logger.info("Listed library papers", count=len(papers))
+    return PaperLibraryResponse(papers=papers, total=len(papers))
+
+
+@router.post("/library/load", response_model=LoadPaperResponse)
+async def load_library_paper(
+    request: LoadPaperRequest,
+    deps: dict = Depends(get_dependencies),
+):
+    """
+    Load a paper from the library, extract text chunks, and generate embeddings.
+
+    Phase 1 升级：为每个文本块生成 OpenAI Embedding，支持语义搜索。
+    """
+    memory_repo = deps["memory_repo"]
+    embedding_service = deps["embedding_service"]
+    pdf_path = get_library_pdf_path(request.paper_id)
+
+    logger.info("Loading paper from library", paper_id=request.paper_id, user_id=request.user_id)
+
+    try:
+        doc = fitz.open(pdf_path)
+        title = doc.metadata.get("title") or request.paper_id
+        page_count = len(doc)
+
+        # Extract text from all pages
+        chunk_texts = []
+        chunk_pages = []
+        for page_num in range(page_count):
+            text = doc[page_num].get_text().replace('\x00', '').strip()
+            if not text:
+                continue
+            # Limit to 2000 chars per page
+            chunk_texts.append(text[:2000])
+            chunk_pages.append(page_num + 1)
+
+        doc.close()
+
+        if not chunk_texts:
+            return LoadPaperResponse(
+                paper_id=request.paper_id,
+                title=title,
+                page_count=page_count,
+                chunk_count=0,
+                message=f"No text content found in {title}.",
+            )
+
+        # Generate embeddings for all chunks (batch processing)
+        logger.info("Generating embeddings for library paper", count=len(chunk_texts))
+        embeddings = await embedding_service.embed_batch(chunk_texts)
+
+        # Save chunks with embeddings
+        chunks_created = 0
+        for i, text in enumerate(chunk_texts):
+            chunk = MemoryChunk(
+                user_id=request.user_id,
+                content=text,
+                embedding=embeddings[i],
+                metadata=MemoryMetadata(
+                    paper_id=request.paper_id,
+                    paper_title=title,
+                    page_number=chunk_pages[i],
+                ),
+            )
+            await memory_repo.save(chunk)
+            chunks_created += 1
+
+        logger.info(
+            "Paper loaded with embeddings",
+            paper_id=request.paper_id,
+            page_count=page_count,
+            chunks=chunks_created,
+        )
+
+        return LoadPaperResponse(
+            paper_id=request.paper_id,
+            title=title,
+            page_count=page_count,
+            chunk_count=chunks_created,
+            message=f"Successfully loaded {title} with {chunks_created} text chunks and embeddings.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to load paper", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/library/paper/{paper_id}/content", response_model=PaperContentResponse)
+async def get_paper_content(paper_id: str):
+    """Get the text content of a paper for reading."""
+    pdf_path = get_library_pdf_path(paper_id)
+
+    try:
+        doc = fitz.open(pdf_path)
+        title = doc.metadata.get("title") or paper_id
+        page_count = len(doc)
+
+        pages = [
+            {"page_number": page_num + 1, "content": doc[page_num].get_text()}
+            for page_num in range(page_count)
+        ]
+        doc.close()
+
+        return PaperContentResponse(
+            paper_id=paper_id,
+            title=title,
+            page_count=page_count,
+            pages=pages,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get paper content", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/library/paper/{paper_id}/pdf")
+async def get_paper_pdf(paper_id: str):
+    """Get the PDF file for viewing in the frontend."""
+    pdf_path = get_library_pdf_path(paper_id)
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=f"{paper_id}.pdf",
+        headers={"Access-Control-Expose-Headers": "Content-Disposition"},
+    )

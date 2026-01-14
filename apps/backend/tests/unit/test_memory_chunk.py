@@ -5,7 +5,6 @@ Tests for MemoryChunk domain entity
 from apps.backend.domains.memory_hub.core.entities import (
     MemoryChunk,
     MemoryMetadata,
-    MemorySource,
 )
 
 
@@ -45,7 +44,6 @@ def test_has_embedding_true(memory_chunk):
 
 def test_has_embedding_false():
     """Test checking if chunk has embedding - false case"""
-    from apps.backend.domains.memory_hub.core.entities import MemoryMetadata
 
     chunk = MemoryChunk(
         user_id="user_1",

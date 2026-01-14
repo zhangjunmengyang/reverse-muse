@@ -4,7 +4,8 @@ PDF Processing Service
 Handles PDF upload, text extraction, and chunking.
 """
 
-import os
+import re
+import unicodedata
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
@@ -15,6 +16,27 @@ import fitz  # PyMuPDF
 from apps.backend.app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
+
+
+def sanitize_text_for_db(text: str) -> str:
+    """
+    Sanitize text for database storage.
+
+    Removes null bytes and other problematic characters that SurrealDB doesn't support.
+    """
+    if not text:
+        return ""
+
+    # Remove null bytes
+    text = text.replace('\x00', '')
+
+    # Remove other control characters except newline, tab, carriage return
+    text = re.sub(r'[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+
+    # Normalize Unicode combining characters
+    text = unicodedata.normalize('NFKC', text)
+
+    return text
 
 
 class PDFService:
@@ -85,6 +107,9 @@ class PDFService:
             for page_num in range(page_count):
                 page = doc[page_num]
                 text = page.get_text()
+
+                # Sanitize text for database storage
+                text = sanitize_text_for_db(text)
 
                 if not text.strip():
                     continue

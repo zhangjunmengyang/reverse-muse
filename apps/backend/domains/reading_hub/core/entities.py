@@ -7,14 +7,15 @@ Defines the reading context and user actions that trigger AI insights.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 
 class TriggerType(Enum):
     """Trigger type for AI insights"""
 
     SELECTION = "selection"  # User selected text
-    LINGER = "linger"  # User stayed at a location
+    LINGER = "linger"  # User stayed at a location (gaze detection)
+    BACKTRACK = "backtrack"  # User scrolled back up (回溯检测)
     SCROLL_STOP = "scroll_stop"  # User stopped scrolling
     MANUAL = "manual"  # Explicit request
 

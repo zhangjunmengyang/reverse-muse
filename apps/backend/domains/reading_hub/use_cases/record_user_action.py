@@ -4,28 +4,24 @@ Use Case: Record User Action
 Orchestrates recording user actions and triggers insight generation.
 """
 
-from typing import List, Optional
+from typing import Optional
 
 from apps.backend.domains.insight_hub.core.entities import BubbleInsight
 from apps.backend.domains.insight_hub.use_cases.generate_insight import (
     GenerateInsightUseCase,
 )
-from apps.backend.domains.memory_hub.core.entities import MemoryChunk
 from apps.backend.domains.memory_hub.port.repository import MemoryChunkRepository
-from apps.backend.domains.reading_hub.core.entities import (
-    ReadingContext,
-    UserAction,
-)
-from apps.backend.domains.reading_hub.port.repository import (
-    ReadingContextRepository,
-)
+from apps.backend.domains.reading_hub.core.entities import UserAction
+from apps.backend.domains.reading_hub.port.repository import ReadingContextRepository
 from apps.backend.domains.reading_hub.services.domain_service import (
     ReadingContextService,
 )
 
+INSIGHT_TRIGGERS = {"selection", "linger"}
+
 
 class RecordUserActionUseCase:
-    """Use case for recording user actions"""
+    """Use case for recording user actions."""
 
     def __init__(
         self,
@@ -44,50 +40,34 @@ class RecordUserActionUseCase:
         context_id: Optional[str],
         action: UserAction,
     ) -> Optional[BubbleInsight]:
-        """Execute use case"""
-        # Get context
+        """Execute use case."""
         if not context_id:
             return None
+
         context = await self.context_repo.get_by_id(context_id)
         if not context:
             return None
 
-        # Record action
-        self.context_service.record_action(context, action)
-
-        # Update position if needed
-        self.context_service.update_position(
-            context,
-            action.reading_position.paper_id,
-            action.reading_position.page_number,
-            action.reading_position.bbox,
-            action.reading_position.text_snippet,
-        )
-
-        # Save updated context
+        # Record action and update position
+        self.context_service.record_action_and_update_position(context, action)
         await self.context_repo.save(context)
 
         # Generate insight if applicable
-        # Only generate for specific trigger types
-        if action.trigger_type.value in ["selection", "linger"]:
-            # Retrieve relevant memories
-            query_text = action.selected_text or action.context_text or ""
-            if query_text:
-                # Note: This is a simplified flow
-                # In production, we'd search by embedding
-                related_memories = await self.memory_repo.list_by_paper(
-                    user_id=context.user_id,
-                    paper_id=context.paper_id,
-                )
+        if action.trigger_type.value not in INSIGHT_TRIGGERS:
+            return None
 
-                # Generate insight
-                insight = await self.insight_use_case.execute(
-                    user_id=context.user_id,
-                    context_id=context.id,
-                    action=action,
-                    related_memories=related_memories,
-                )
+        query_text = action.selected_text or action.context_text or ""
+        if not query_text:
+            return None
 
-                return insight
+        related_memories = await self.memory_repo.list_by_paper(
+            user_id=context.user_id,
+            paper_id=context.paper_id,
+        )
 
-        return None
+        return await self.insight_use_case.execute(
+            user_id=context.user_id,
+            context_id=context.id,
+            action=action,
+            related_memories=related_memories,
+        )

@@ -2,66 +2,42 @@
 SurrealDB Implementation of MemoryChunkRepository
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
-from apps.backend.domains.memory_hub.core.entities import MemoryChunk, MemorySource
+from apps.backend.domains.memory_hub.core.entities import (
+    MemoryChunk,
+    MemoryMetadata,
+    MemorySource,
+)
 from apps.backend.domains.memory_hub.port.repository import MemoryChunkRepository
+from apps.backend.infrastructure.db.base_repository import BaseSurrealRepository
 from apps.backend.infrastructure.db.connection import get_db
 
 logger = structlog.get_logger(__name__)
 
 
-class SurrealMemoryChunkRepository(MemoryChunkRepository):
-    """SurrealDB implementation of memory chunk repository"""
+class SurrealMemoryChunkRepository(BaseSurrealRepository[MemoryChunk], MemoryChunkRepository):
+    """SurrealDB implementation of memory chunk repository."""
 
-    async def save(self, chunk: MemoryChunk) -> None:
-        """Save a memory chunk"""
-        db = await get_db()
-
-        data = self._entity_to_dict(chunk)
-
-        if chunk.id:
-            await db.update("memory_chunks", chunk.id, data)
-        else:
-            result = await db.create("memory_chunks", data)
-            chunk.id = result[0]["id"]
-
-    async def get_by_id(self, chunk_id: str) -> Optional[MemoryChunk]:
-        """Get a memory chunk by ID"""
-        db = await get_db()
-        result = await db.select("memory_chunks", chunk_id)
-        if result:
-            return self._dict_to_entity(result[0])
-        return None
+    table_name = "memory_chunks"
 
     async def list_by_user(self, user_id: str) -> List[MemoryChunk]:
-        """List all memory chunks for a user"""
-        db = await get_db()
-        result = await db.query(
-            """
-            SELECT * FROM memory_chunks
-            WHERE user_id = $user_id
-            ORDER BY created_at DESC
-            """,
-            user_id=user_id,
+        """List all memory chunks for a user."""
+        results = await self.query(
+            f"SELECT * FROM {self.table_name} WHERE user_id = '{user_id}'"
         )
-        return [self._dict_to_entity(row) for row in result[0]]
+        return [self._dict_to_entity(row) for row in results if isinstance(row, dict)]
 
     async def list_by_paper(self, user_id: str, paper_id: str) -> List[MemoryChunk]:
-        """List memory chunks for a specific paper"""
-        db = await get_db()
-        result = await db.query(
-            """
-            SELECT * FROM memory_chunks
-            WHERE user_id = $user_id AND paper_id = $paper_id
-            ORDER BY page_number ASC
-            """,
-            user_id=user_id,
-            paper_id=paper_id,
+        """List memory chunks for a specific paper."""
+        results = await self.query(
+            f"SELECT * FROM {self.table_name} "
+            f"WHERE user_id = '{user_id}' AND paper_id = '{paper_id}' "
+            f"ORDER BY page_number ASC"
         )
-        return [self._dict_to_entity(row) for row in result[0]]
+        return [self._dict_to_entity(row) for row in results if isinstance(row, dict)]
 
     async def search_similar(
         self,
@@ -70,74 +46,62 @@ class SurrealMemoryChunkRepository(MemoryChunkRepository):
         exclude_paper_id: Optional[str] = None,
         limit: int = 5,
         threshold: float = 0.85,
-    ) -> List[MemoryChunk]:
-        """
-        Search for similar memory chunks by vector similarity.
-        Simplified implementation for MVP.
-        """
-        # For MVP, we'll use a simple query without vector search
-        # In production, integrate with vector database like Pinecone or use SurrealDB's vector extension
-        db = await get_db()
-
-        query = "SELECT * FROM memory_chunks WHERE user_id = $user_id"
-        params = {"user_id": user_id}
-
+    ) -> List[Tuple[MemoryChunk, float]]:
+        """Search for similar memory chunks (simplified for MVP)."""
         if exclude_paper_id:
-            query += " AND paper_id != $exclude_paper_id"
-            params["exclude_paper_id"] = exclude_paper_id
+            sql = (
+                f"SELECT * FROM {self.table_name} "
+                f"WHERE user_id = '{user_id}' AND paper_id != '{exclude_paper_id}' "
+                f"LIMIT {limit}"
+            )
+        else:
+            sql = f"SELECT * FROM {self.table_name} WHERE user_id = '{user_id}' LIMIT {limit}"
 
-        query += f" LIMIT {limit}"
-
-        result = await db.query(query, **params)
-        chunks = [self._dict_to_entity(row) for row in result[0]]
-
-        # TODO: Add vector similarity search
-        # For now, return the chunks (simulated similarity)
-        return chunks
+        results = await self.query(sql)
+        return [
+            (self._dict_to_entity(row), 1.0)
+            for row in results
+            if isinstance(row, dict)
+        ]
 
     async def batch_save(self, chunks: List[MemoryChunk]) -> None:
-        """Save multiple memory chunks efficiently"""
+        """Save multiple memory chunks efficiently."""
         for chunk in chunks:
             await self.save(chunk)
 
     async def delete_by_paper(self, user_id: str, paper_id: str) -> int:
-        """Delete all memory chunks for a paper, returns count deleted"""
+        """Delete all memory chunks for a paper, returns count deleted."""
         db = await get_db()
-        result = await db.query(
-            """
-            SELECT id FROM memory_chunks
-            WHERE user_id = $user_id AND paper_id = $paper_id
-            """,
-            user_id=user_id,
-            paper_id=paper_id,
+        results = await self.query(
+            f"SELECT id FROM {self.table_name} "
+            f"WHERE user_id = '{user_id}' AND paper_id = '{paper_id}'"
         )
+        if not results:
+            return 0
 
-        if result and result[0]:
-            chunk_ids = [row["id"] for row in result[0]]
-            for chunk_id in chunk_ids:
-                await db.delete("memory_chunks", chunk_id)
-            return len(chunk_ids)
-        return 0
+        for row in results:
+            if isinstance(row, dict) and "id" in row:
+                await db.delete(row["id"])
+        return len(results)
 
-    def _entity_to_dict(self, entity: MemoryChunk) -> dict:
-        """Convert entity to dict for storage"""
+    def _entity_to_dict(self, entity: MemoryChunk) -> Dict[str, Any]:
+        """Convert entity to dict for storage."""
         data = {
             "user_id": entity.user_id,
             "content": entity.content,
-            "embedding": entity.embedding,
             "paper_id": entity.metadata.paper_id,
             "paper_title": entity.metadata.paper_title,
             "page_number": entity.metadata.page_number,
             "source": entity.metadata.source.value,
         }
+        if entity.embedding is not None:
+            data["embedding"] = entity.embedding
         if entity.id:
             data["id"] = entity.id
         return data
 
-    def _dict_to_entity(self, data: dict) -> MemoryChunk:
-        """Convert dict from storage to entity"""
-        from apps.backend.domains.memory_hub.core.entities import MemoryMetadata
-
+    def _dict_to_entity(self, data: Dict[str, Any]) -> MemoryChunk:
+        """Convert dict from storage to entity."""
         metadata = MemoryMetadata(
             paper_id=data.get("paper_id", ""),
             paper_title=data.get("paper_title", ""),
@@ -152,3 +116,9 @@ class SurrealMemoryChunkRepository(MemoryChunkRepository):
             embedding=data.get("embedding"),
             metadata=metadata,
         )
+
+    def _get_entity_id(self, entity: MemoryChunk) -> Optional[str]:
+        return entity.id
+
+    def _set_entity_id(self, entity: MemoryChunk, entity_id: Optional[str]) -> None:
+        entity.id = entity_id

@@ -3,7 +3,6 @@ Tests for BubbleInsight domain entity
 """
 
 from apps.backend.domains.insight_hub.core.entities import (
-    BubbleInsight,
     InsightStatus,
     InsightType,
 )

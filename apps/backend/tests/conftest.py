@@ -2,7 +2,6 @@
 Test fixtures for unit tests
 """
 
-from datetime import datetime
 
 import pytest
 

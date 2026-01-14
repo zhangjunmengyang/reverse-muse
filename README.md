@@ -24,19 +24,15 @@ reverse-muse/
 │   ├── backend/              # FastAPI backend (Python)
 │   │   ├── app/
 │   │   │   ├── core/         # Configuration, middleware
-│   │   │   ├── routes/       # API endpoints
-│   │   │   └── use_cases/   # Application layer orchestration
+│   │   │   └── routes/       # API endpoints
 │   │   ├── domains/          # DDD Domain Layer
 │   │   │   ├── reading_hub/      # Reading context & triggers
 │   │   │   ├── memory_hub/       # Vector memory chunks
 │   │   │   └── insight_hub/      # AI-generated insights
 │   │   └── infrastructure/  # Database, external services
-│   └── frontend/            # Next.js frontend (TODO)
-├── packages/
-│   ├── shared/              # Shared types and utilities
-│   └── domain/             # Domain models (shared across layers)
-└── docs/
-    └── prd1.0.md          # Product Requirements Document
+│   └── frontend/            # Next.js frontend
+├── data/                     # Runtime data (pdfs, cache, surrealdb)
+└── docs/                     # Documentation
 ```
 
 ### DDD Layering
@@ -342,7 +338,7 @@ The current implementation includes:
    - Add domain services in `apps/backend/domains/*/services/`
    - Create repository interface in `apps/backend/domains/*/port/`
    - Implement repository in `apps/backend/infrastructure/db/`
-   - Create use case in `apps/backend/app/use_cases/`
+   - Create use case in `apps/backend/domains/*/use_cases/`
    - Expose via API in `apps/backend/app/routes/`
 
 2. **Run tests**:

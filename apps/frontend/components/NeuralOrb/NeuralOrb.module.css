@@ -1,0 +1,171 @@
+/* CSS Custom Property for animation */
+@property --rotation {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Keyframes */
+@keyframes spin {
+  from {
+    --rotation: 0deg;
+  }
+  to {
+    --rotation: 360deg;
+  }
+}
+
+@keyframes glow-breathe {
+  0%, 100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Fluid pulsing for active states - more pronounced */
+@keyframes fluid-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  20% {
+    transform: scale(1.08);
+  }
+  40% {
+    transform: scale(0.94);
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  80% {
+    transform: scale(0.96);
+  }
+}
+
+@keyframes fluid-breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.1);
+  }
+  50% {
+    transform: scale(0.92);
+  }
+  75% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes inner-shimmer {
+  0%, 100% {
+    opacity: 0.05;
+  }
+  50% {
+    opacity: 0.12;
+  }
+}
+
+/* Main container */
+.orbContainer {
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+}
+
+/* Outer glow layer 1 - larger, more diffuse */
+.glowLayer1 {
+  position: absolute;
+  inset: -40%;
+  background: var(--gradient);
+  border-radius: 50%;
+  filter: blur(calc(var(--blur) * 2));
+  opacity: 0.25;
+  animation:
+    spin var(--speed) linear infinite,
+    glow-breathe 4s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+/* Outer glow layer 2 - medium, counter-rotating */
+.glowLayer2 {
+  position: absolute;
+  inset: -25%;
+  background: var(--gradient);
+  border-radius: 50%;
+  filter: blur(calc(var(--blur) * 1.2));
+  opacity: 0.35;
+  animation:
+    spin var(--speed) linear infinite reverse,
+    glow-pulse 3s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+/* Main spinning gradient ring - THINNER */
+.spinningGradient {
+  position: absolute;
+  inset: 0;
+  background: var(--gradient);
+  border-radius: 50%;
+  animation: spin var(--speed) linear infinite;
+  transform-origin: center center;
+}
+
+/* Inner dark circle - LARGER to make ring thinner */
+.innerCircle {
+  position: absolute;
+  inset: 8%;
+  background: radial-gradient(
+    circle at center,
+    rgba(5, 5, 8, 0.98) 0%,
+    rgba(8, 8, 12, 0.99) 40%,
+    rgba(10, 10, 15, 1) 100%
+  );
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.6);
+}
+
+/* Inner glow effect - centered highlight */
+.innerGlow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 255, 255, 0.06) 0%,
+    transparent 50%
+  );
+  border-radius: 50%;
+  animation: inner-shimmer 2s ease-in-out infinite;
+}
+
+/* === Active state fluid animation === */
+.orbContainer.active .spinningGradient {
+  animation:
+    spin var(--speed) linear infinite,
+    fluid-pulse 2.5s ease-in-out infinite;
+}
+
+.orbContainer.active .glowLayer1 {
+  animation:
+    spin var(--speed) linear infinite,
+    glow-breathe 3s ease-in-out infinite,
+    fluid-breathe 4s ease-in-out infinite;
+}
+
+.orbContainer.active .glowLayer2 {
+  animation:
+    spin var(--speed) linear infinite reverse,
+    glow-pulse 2.5s ease-in-out infinite,
+    fluid-pulse 3s ease-in-out infinite 0.5s;
+}

@@ -7,7 +7,7 @@ Interfaces for reading context persistence.
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from apps.backend.domains.reading_hub.core.entities import ReadingContext, UserAction
+from apps.backend.domains.reading_hub.core.entities import ReadingContext
 
 
 class ReadingContextRepository(ABC):

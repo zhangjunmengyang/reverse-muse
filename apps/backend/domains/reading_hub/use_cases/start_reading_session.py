@@ -4,7 +4,6 @@ Use Case: Start Reading Session
 Orchestrates the creation of a new reading context.
 """
 
-from typing import Optional
 
 from apps.backend.domains.reading_hub.core.entities import ReadingContext
 from apps.backend.domains.reading_hub.port.repository import (
