@@ -122,3 +122,21 @@ class SurrealMemoryChunkRepository(BaseSurrealRepository[MemoryChunk], MemoryChu
 
     def _set_entity_id(self, entity: MemoryChunk, entity_id: Optional[str]) -> None:
         entity.id = entity_id
+
+    async def list_distinct_papers(self) -> List[Dict[str, Any]]:
+        """List all distinct papers in the database."""
+        # Group by paper_id to get distinct papers with their info
+        results = await self.query(
+            f"SELECT paper_id, paper_title, math::max(page_number) as page_count "
+            f"FROM {self.table_name} "
+            f"GROUP BY paper_id, paper_title"
+        )
+        papers = []
+        for row in results:
+            if isinstance(row, dict) and row.get("paper_id"):
+                papers.append({
+                    "paper_id": row["paper_id"],
+                    "paper_title": row.get("paper_title", row["paper_id"]),
+                    "page_count": row.get("page_count", 0),
+                })
+        return papers

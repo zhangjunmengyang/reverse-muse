@@ -62,17 +62,15 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 settings = get_settings()
 
-# Paper Library path from settings
-PAPER_LIBRARY_PATH = settings.paper_library_dir
+# PDF directories
+PDF_DIR = settings.pdf_dir  # data/pdfs - where uploaded PDFs are stored
 
 
-def get_library_pdf_path(paper_id: str) -> Path:
-    """Get the PDF path for a library paper, raising 404 if not found."""
-    if not PAPER_LIBRARY_PATH:
-        raise HTTPException(status_code=404, detail="Paper library not configured")
-    pdf_path = PAPER_LIBRARY_PATH / f"{paper_id}.pdf"
+def get_pdf_path(paper_id: str) -> Path:
+    """Get the PDF path for a paper, checking data/pdfs directory."""
+    pdf_path = PDF_DIR / f"{paper_id}.pdf"
     if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found in library")
+        raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
     return pdf_path
 
 
@@ -420,28 +418,28 @@ async def get_pdf_metadata(
 
 
 @router.get("/library/papers", response_model=PaperLibraryResponse)
-async def list_library_papers():
-    """List all papers available in the paper library folder."""
-    if not PAPER_LIBRARY_PATH or not PAPER_LIBRARY_PATH.exists():
-        logger.warning("Paper library path not configured or does not exist")
-        return PaperLibraryResponse(papers=[], total=0)
+async def list_library_papers(deps: dict = Depends(get_dependencies)):
+    """List all papers from database (uploaded papers)."""
+    memory_repo = deps["memory_repo"]
+
+    # Get distinct papers from database
+    db_papers = await memory_repo.list_distinct_papers()
 
     papers = []
-    for pdf_file in PAPER_LIBRARY_PATH.glob("*.pdf"):
-        try:
-            metadata = read_pdf_metadata(pdf_file)
-            papers.append(PaperInfo(
-                paper_id=pdf_file.stem,
-                filename=pdf_file.name,
-                title=metadata["title"],
-                author=metadata["author"],
-                page_count=metadata["page_count"],
-                file_path=str(pdf_file),
-            ))
-        except Exception as e:
-            logger.warning("Failed to read PDF", file=str(pdf_file), error=str(e))
+    for paper_data in db_papers:
+        paper_id = paper_data["paper_id"]
+        pdf_path = PDF_DIR / f"{paper_id}.pdf"
 
-    logger.info("Listed library papers", count=len(papers))
+        papers.append(PaperInfo(
+            paper_id=paper_id,
+            filename=f"{paper_id}.pdf",
+            title=paper_data.get("paper_title", paper_id),
+            author=None,  # Could be added to metadata later
+            page_count=paper_data.get("page_count", 0),
+            file_path=str(pdf_path) if pdf_path.exists() else None,
+        ))
+
+    logger.info("Listed papers from database", count=len(papers))
     return PaperLibraryResponse(papers=papers, total=len(papers))
 
 
@@ -457,7 +455,7 @@ async def load_library_paper(
     """
     memory_repo = deps["memory_repo"]
     embedding_service = deps["embedding_service"]
-    pdf_path = get_library_pdf_path(request.paper_id)
+    pdf_path = get_pdf_path(request.paper_id)
 
     logger.info("Loading paper from library", paper_id=request.paper_id, user_id=request.user_id)
 
@@ -532,7 +530,7 @@ async def load_library_paper(
 @router.get("/library/paper/{paper_id}/content", response_model=PaperContentResponse)
 async def get_paper_content(paper_id: str):
     """Get the text content of a paper for reading."""
-    pdf_path = get_library_pdf_path(paper_id)
+    pdf_path = get_pdf_path(paper_id)
 
     try:
         doc = fitz.open(pdf_path)
@@ -561,7 +559,7 @@ async def get_paper_content(paper_id: str):
 @router.get("/library/paper/{paper_id}/pdf")
 async def get_paper_pdf(paper_id: str):
     """Get the PDF file for viewing in the frontend."""
-    pdf_path = get_library_pdf_path(paper_id)
+    pdf_path = get_pdf_path(paper_id)
     return FileResponse(
         path=pdf_path,
         media_type="application/pdf",

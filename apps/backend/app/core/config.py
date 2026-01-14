@@ -104,16 +104,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "console"  # json or console
 
-    # Paper Library (external papers directory)
-    paper_library_path: Optional[str] = None
-
-    @property
-    def paper_library_dir(self) -> Optional[Path]:
-        """Get the paper library path if configured."""
-        if self.paper_library_path:
-            return Path(self.paper_library_path)
-        return None
-
 
 # Global settings instance
 settings = Settings()

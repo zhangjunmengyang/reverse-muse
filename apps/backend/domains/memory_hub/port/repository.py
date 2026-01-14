@@ -57,3 +57,11 @@ class MemoryChunkRepository(ABC):
     async def delete_by_paper(self, user_id: str, paper_id: str) -> int:
         """Delete all memory chunks for a paper, returns count deleted"""
         pass
+
+    @abstractmethod
+    async def list_distinct_papers(self) -> List[dict]:
+        """
+        List all distinct papers in the database.
+        Returns list of dicts with paper_id, paper_title, page_count.
+        """
+        pass
