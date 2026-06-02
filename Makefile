@@ -13,15 +13,17 @@ BACKEND_PORT := 8001
 FRONTEND_PORT := 3001
 DB_PORT := 8000
 
-# Python 路径 (使用 conda 环境)
-PYTHON := /Users/zhangjunmengyang/miniforge3/bin/python3
+# Runtime commands. Prefer the repo-local virtualenv, then fall back to PATH.
+PYTHON ?= $(shell if [ -x "$(PROJECT_ROOT)/.venv/bin/python" ]; then echo "$(PROJECT_ROOT)/.venv/bin/python"; else command -v python3 || command -v python; fi)
+NPM ?= $(shell command -v npm || echo npm)
 
 # 超时配置
 KILL_TIMEOUT := 3
 HEALTH_TIMEOUT := 30
 
 # Docker Compose
-DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+DOCKER := $(shell command -v docker 2>/dev/null)
+DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; fi)
 
 # ============================================
 # 帮助
@@ -77,7 +79,9 @@ _ensure_dirs:
 
 db-start:
 	@echo "[1/3] 启动数据库 (SurrealDB)..."
-	@if docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
+	@if [ -z "$(DOCKER)" ] || [ -z "$(DOCKER_COMPOSE)" ]; then \
+		echo "  跳过数据库：未找到 Docker / Docker Compose"; \
+	elif docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
 		echo "  数据库已在运行"; \
 	else \
 		$(DOCKER_COMPOSE) -f docker-compose.yml up -d 2>&1 | grep -v "^$$" || true; \
@@ -93,13 +97,15 @@ _start_backend:
 		PYTHONPATH=$(PROJECT_ROOT) nohup $(PYTHON) -m uvicorn apps.backend.app.main:app \
 			--host 0.0.0.0 --port $(BACKEND_PORT) \
 			> $(LOG_DIR)/backend.log 2>&1 & echo $$! > $(PID_DIR)/backend.pid; \
-		sleep 5; \
-		if lsof -ti :$(BACKEND_PORT) >/dev/null 2>&1; then \
-			echo "  后端启动成功"; \
-		else \
-			echo "  后端启动失败，查看日志: make logs-backend"; \
-			exit 1; \
-		fi; \
+		for i in $$(seq 1 $(HEALTH_TIMEOUT)); do \
+			if curl -sf http://localhost:$(BACKEND_PORT)/health >/dev/null 2>&1; then \
+				echo "  后端启动成功"; \
+				exit 0; \
+			fi; \
+			sleep 1; \
+		done; \
+		echo "  后端启动失败，查看日志: make logs-backend"; \
+		exit 1; \
 	fi
 
 _start_frontend:
@@ -107,14 +113,17 @@ _start_frontend:
 	@if lsof -ti :$(FRONTEND_PORT) >/dev/null 2>&1; then \
 		echo "  前端已在运行 (端口 $(FRONTEND_PORT))"; \
 	else \
-		cd apps/frontend && nohup pnpm dev --port $(FRONTEND_PORT) \
+		nohup sh -c 'cd apps/frontend && exec $(NPM) run dev -- --port $(FRONTEND_PORT)' \
 			> $(PROJECT_ROOT)/$(LOG_DIR)/frontend.log 2>&1 & echo $$! > $(PROJECT_ROOT)/$(PID_DIR)/frontend.pid; \
-		sleep 3; \
-		if lsof -ti :$(FRONTEND_PORT) >/dev/null 2>&1; then \
-			echo "  前端启动成功"; \
-		else \
-			echo "  前端启动失败，查看日志: make logs-frontend"; \
-		fi; \
+		for i in $$(seq 1 $(HEALTH_TIMEOUT)); do \
+			if curl -sf http://localhost:$(FRONTEND_PORT) >/dev/null 2>&1; then \
+				echo "  前端启动成功"; \
+				exit 0; \
+			fi; \
+			sleep 1; \
+		done; \
+		echo "  前端启动失败，查看日志: make logs-frontend"; \
+		exit 1; \
 	fi
 
 # ============================================
@@ -141,7 +150,9 @@ _stop_frontend:
 
 db-stop:
 	@echo "[3/3] 停止数据库..."
-	@$(DOCKER_COMPOSE) -f docker-compose.yml down 2>/dev/null || true
+	@if [ -n "$(DOCKER_COMPOSE)" ]; then \
+		$(DOCKER_COMPOSE) -f docker-compose.yml down 2>/dev/null || true; \
+	fi
 	@echo "  数据库已停止"
 
 # ============================================
@@ -161,7 +172,9 @@ status:
 	@echo "=== 服务状态 ==="
 	@echo ""
 	@printf "  数据库 (SurrealDB) ... "
-	@if docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
+	@if [ -z "$(DOCKER)" ]; then \
+		printf "\033[33m不可用\033[0m (未找到 Docker)\n"; \
+	elif docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
 		printf "\033[32m运行中\033[0m (端口 $(DB_PORT))\n"; \
 	else \
 		printf "\033[31m未运行\033[0m\n"; \
@@ -189,7 +202,9 @@ healthcheck:
 	@echo ""
 	@failed=0; \
 	printf "  数据库 ............... "; \
-	if docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
+	if [ -z "$(DOCKER)" ]; then \
+		printf "\033[33mWARN\033[0m (未找到 Docker，跳过 SurrealDB)\n"; \
+	elif docker ps --format '{{.Names}}' | grep -q "reverse-muse-db"; then \
 		printf "\033[32mOK\033[0m\n"; \
 	else \
 		printf "\033[31mFAIL\033[0m\n"; \
@@ -262,7 +277,9 @@ force-clean:
 	done
 	@echo ""
 	@echo "[3/3] 清理 Docker..."
-	@$(DOCKER_COMPOSE) -f docker-compose.yml down --remove-orphans 2>/dev/null || true
+	@if [ -n "$(DOCKER_COMPOSE)" ]; then \
+		$(DOCKER_COMPOSE) -f docker-compose.yml down --remove-orphans 2>/dev/null || true; \
+	fi
 	@echo ""
 	@rm -rf $(PID_DIR) $(LOG_DIR)
 	@echo "强制清理完成"
@@ -274,8 +291,8 @@ version:
 	@echo ""
 	@echo "Reverse Muse"
 	@echo "============"
-	@echo "Docker:  $$(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',' || echo '未安装')"
-	@echo "Python:  $$(python3 --version 2>/dev/null | cut -d' ' -f2 || echo '未安装')"
+	@echo "Docker:  $$(if command -v docker >/dev/null 2>&1; then docker --version | cut -d' ' -f3 | tr -d ','; else echo '未安装'; fi)"
+	@echo "Python:  $$($(PYTHON) --version 2>/dev/null | cut -d' ' -f2 || echo '未安装')"
 	@echo "Node:    $$(node --version 2>/dev/null || echo '未安装')"
-	@echo "pnpm:    $$(pnpm --version 2>/dev/null || echo '未安装')"
+	@echo "npm:     $$($(NPM) --version 2>/dev/null || echo '未安装')"
 	@echo ""

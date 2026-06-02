@@ -9,6 +9,7 @@ from typing import List
 from apps.backend.domains.insight_hub.core.entities import (
     BubbleInsight,
     InsightContext,
+    InsightStatus,
     InsightType,
 )
 
@@ -33,7 +34,40 @@ class InsightGenerationService:
             content=content,
             confidence=confidence,
             context=context,
+            status=InsightStatus.GENERATED,
         )
+
+    def filter_high_confidence(
+        self,
+        insights: List[BubbleInsight],
+        threshold: float = 0.8,
+    ) -> List[BubbleInsight]:
+        """Keep insights whose confidence meets the threshold."""
+        return [insight for insight in insights if insight.confidence >= threshold]
+
+    def mark_insight_displayed(self, insight: BubbleInsight) -> None:
+        """Mark an insight as displayed."""
+        insight.mark_displayed()
+
+    def mark_insight_dismissed(self, insight: BubbleInsight) -> None:
+        """Mark an insight as dismissed."""
+        insight.mark_dismissed()
+
+    def pin_insight(self, insight: BubbleInsight) -> None:
+        """Pin an insight for later review."""
+        insight.mark_pinned()
+
+    def get_displayable_insights(
+        self,
+        insights: List[BubbleInsight],
+        confidence_threshold: float = 0.8,
+    ) -> List[BubbleInsight]:
+        """Return insights that are ready and useful enough to display."""
+        return [
+            insight
+            for insight in insights
+            if insight.should_display(confidence_threshold=confidence_threshold)
+        ]
 
     def is_duplicate_insight(
         self,

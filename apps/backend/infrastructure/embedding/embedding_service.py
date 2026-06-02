@@ -11,6 +11,7 @@ import structlog
 from openai import AsyncOpenAI
 
 from apps.backend.app.core.config import get_settings
+from apps.backend.infrastructure.openai_compat import normalize_openai_base_url
 
 logger = structlog.get_logger(__name__)
 
@@ -26,18 +27,25 @@ class EmbeddingService:
         self.settings = get_settings()
         self._client: Optional[AsyncOpenAI] = None
         self._model = self.settings.default_embedding_model
-        self._dimension = 1536  # text-embedding-3-small 的默认维度
+        self._dimension = self.settings.embedding_dimension
+        self._encoding_format = self.settings.embedding_encoding_format
+        api_key = self.settings.embedding_api_key or self.settings.openai_api_key
+        base_url = normalize_openai_base_url(
+            self.settings.embedding_base_url or self.settings.openai_base_url
+        )
 
-        if self.settings.openai_api_key:
+        if api_key:
             self._client = AsyncOpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_base_url,
+                api_key=api_key,
+                base_url=base_url,
                 timeout=60.0,
             )
             logger.info(
                 "Embedding service initialized",
                 model=self._model,
-                base_url=self.settings.openai_base_url,
+                base_url=base_url,
+                dimension=self._dimension,
+                encoding_format=self._encoding_format,
             )
 
     @property
@@ -57,7 +65,8 @@ class EmbeddingService:
         """
         if not self._client:
             raise RuntimeError(
-                "Embedding service not configured. Please set OPENAI_API_KEY in .env"
+                "Embedding service not configured. "
+                "Please set EMBEDDING_API_KEY or OPENAI_API_KEY in .env"
             )
 
         # 清理文本
@@ -69,6 +78,7 @@ class EmbeddingService:
             response = await self._client.embeddings.create(
                 input=text,
                 model=self._model,
+                encoding_format=self._encoding_format,
             )
             embedding = response.data[0].embedding
             logger.debug("Generated embedding", text_length=len(text), dim=len(embedding))
@@ -96,7 +106,8 @@ class EmbeddingService:
         """
         if not self._client:
             raise RuntimeError(
-                "Embedding service not configured. Please set OPENAI_API_KEY in .env"
+                "Embedding service not configured. "
+                "Please set EMBEDDING_API_KEY or OPENAI_API_KEY in .env"
             )
 
         # 清理空文本
@@ -116,6 +127,7 @@ class EmbeddingService:
                 response = await self._client.embeddings.create(
                     input=batch,
                     model=self._model,
+                    encoding_format=self._encoding_format,
                 )
 
                 # 按索引排序结果
@@ -157,7 +169,7 @@ class EmbeddingService:
             return 0.0
 
         # 计算点积
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
 
         # 计算模长
         norm1 = sum(a * a for a in vec1) ** 0.5

@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 from apps.backend.domains.reading_hub.core.entities import (
     ReadingContext,
-    UserAction,
     ReadingPosition,
     TriggerType,
+    UserAction,
 )
 
 
@@ -41,7 +41,7 @@ def test_add_action_respects_max_history(reading_context):
     """Test that adding actions respects max history limit"""
     max_history = 10
 
-    for i in range(15):
+    for _i in range(15):
         action = UserAction(
             trigger_type=TriggerType.SELECTION,
             reading_position=ReadingPosition(

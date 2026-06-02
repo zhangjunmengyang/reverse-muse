@@ -17,7 +17,7 @@ from apps.backend.domains.reading_hub.services.domain_service import (
     ReadingContextService,
 )
 
-INSIGHT_TRIGGERS = {"selection", "linger"}
+INSIGHT_TRIGGERS = {"selection", "linger", "backtrack"}
 
 
 class RecordUserActionUseCase:

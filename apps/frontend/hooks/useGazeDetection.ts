@@ -2,6 +2,13 @@
 
 import { useRef, useState, useEffect, useCallback } from 'react';
 
+import {
+  decideReadingTrigger,
+  type PassiveTriggerType,
+  type TriggerDecisionReason,
+} from '@/lib/readingTriggerPolicy';
+import type { ReadingTriggerConfig } from '@/lib/readingTriggerConfig';
+
 // ============================================
 // Types
 // ============================================
@@ -17,21 +24,20 @@ export interface GazeDetection {
   stateJustChanged: boolean;
   /** 当前页面的文本内容 */
   focusedText: string;
+  /** 一次性触发事件 ID */
+  triggerId: number;
+  /** 建议触发类型 */
+  triggerType: PassiveTriggerType | null;
+  /** 触发原因，用于调试 */
+  triggerReason: TriggerDecisionReason | null;
 }
 
 export interface GazeConfig {
   /** 获取当前可见文本的函数 */
   getVisibleText: () => string;
+  /** 主动触发阈值配置 */
+  triggerConfig: ReadingTriggerConfig;
 }
-
-// ============================================
-// Constants
-// ============================================
-
-const GAZE_TO_OBSERVING_MS = 5000;  // 5秒 -> 开始观察（预触发）
-const GAZE_TO_READY_MS = 8000;      // 8秒 -> 准备好（触发洞察）
-const MOUSE_MOVE_THRESHOLD = 50;    // 鼠标移动超过 50px 算作活动
-const SCROLL_THRESHOLD = 200;       // 滚动超过 200px 算作换位置
 
 // ============================================
 // Hook
@@ -46,15 +52,21 @@ export function useGazeDetection(
     gazeTime: 0,
     stateJustChanged: false,
     focusedText: '',
+    triggerId: 0,
+    triggerType: null,
+    triggerReason: null,
   });
 
   // 追踪用户活动
   const lastActivityTime = useRef(Date.now());
   const lastMousePos = useRef({ x: 0, y: 0 });
-  const lastReadyScrollPos = useRef(0);  // ready 时的滚动位置
-  const hasScrolledAfterReady = useRef(true); // 是否在 ready 后滚动过（初始 true 允许首次触发）
+  const paperLoadedAt = useRef(Date.now());
+  const lastScrollTop = useRef(0);
+  const backtrackDistancePx = useRef(0);
+  const lastTriggerAt = useRef(0);
+  const lastTriggerByText = useRef<Record<string, number>>({});
   const isActive = useRef(true); // 页面是否在前台
-  const scrollListenerBound = useRef(false); // 滚动监听器是否已绑定
+  const boundScrollContainer = useRef<HTMLElement | null>(null);
 
   // 重置凝视计时
   const resetGaze = useCallback(() => {
@@ -68,7 +80,10 @@ export function useGazeDetection(
       const dy = Math.abs(e.clientY - lastMousePos.current.y);
 
       // 只有移动超过阈值才算活动
-      if (dx > MOUSE_MOVE_THRESHOLD || dy > MOUSE_MOVE_THRESHOLD) {
+      if (
+        dx > config.triggerConfig.mouseMoveThresholdPx
+        || dy > config.triggerConfig.mouseMoveThresholdPx
+      ) {
         lastMousePos.current = { x: e.clientX, y: e.clientY };
         resetGaze();
       }
@@ -76,7 +91,7 @@ export function useGazeDetection(
 
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [resetGaze]);
+  }, [config.triggerConfig.mouseMoveThresholdPx, resetGaze]);
 
   // 监听滚动 - 使用轮询方式确保绑定
   useEffect(() => {
@@ -84,43 +99,59 @@ export function useGazeDetection(
       const container = scrollContainerRef.current;
       if (!container) return;
 
+      const previousScrollTop = lastScrollTop.current;
       const currentScrollTop = container.scrollTop;
-      const scrollDelta = Math.abs(currentScrollTop - lastReadyScrollPos.current);
+      const scrollDelta = currentScrollTop - previousScrollTop;
 
-      // 如果滚动距离超过阈值，标记为已滚动（可以再次触发洞察）
-      if (scrollDelta > SCROLL_THRESHOLD) {
-        hasScrolledAfterReady.current = true;
+      if (scrollDelta < 0) {
+        backtrackDistancePx.current += Math.abs(scrollDelta);
+      } else if (scrollDelta > 80) {
+        backtrackDistancePx.current = 0;
       }
 
-      resetGaze();
+      lastScrollTop.current = currentScrollTop;
+
+      if (Math.abs(scrollDelta) > config.triggerConfig.scrollActivityThresholdPx) {
+        resetGaze();
+      }
     };
 
-    // 轮询检查容器是否就绪
+    // 轮询检查容器是否就绪；PDF 切换时同步重新绑定新容器。
     const checkAndBind = () => {
       const container = scrollContainerRef.current;
-      if (container && !scrollListenerBound.current) {
-        container.addEventListener('scroll', handleScroll, { passive: true });
-        scrollListenerBound.current = true;
+      if (container === boundScrollContainer.current) {
+        return;
       }
+
+      if (boundScrollContainer.current) {
+        boundScrollContainer.current.removeEventListener('scroll', handleScroll);
+      }
+
+      if (container) {
+        paperLoadedAt.current = Date.now();
+        lastScrollTop.current = container.scrollTop;
+        backtrackDistancePx.current = 0;
+        container.addEventListener('scroll', handleScroll, { passive: true });
+      }
+
+      boundScrollContainer.current = container;
     };
 
     checkAndBind();
 
     const interval = setInterval(() => {
-      if (!scrollListenerBound.current) {
-        checkAndBind();
-      }
+      checkAndBind();
     }, 500);
 
     return () => {
       clearInterval(interval);
-      const container = scrollContainerRef.current;
+      const container = boundScrollContainer.current;
       if (container) {
         container.removeEventListener('scroll', handleScroll);
       }
-      scrollListenerBound.current = false;
+      boundScrollContainer.current = null;
     };
-  }, [scrollContainerRef, resetGaze]);
+  }, [config.triggerConfig.scrollActivityThresholdPx, scrollContainerRef, resetGaze]);
 
   // 监听键盘
   useEffect(() => {
@@ -164,55 +195,58 @@ export function useGazeDetection(
 
       const now = Date.now();
       const gazeTime = now - lastActivityTime.current;
-      const canTrigger = hasScrolledAfterReady.current;
       const container = scrollContainerRef.current;
+      const visibleText = config.getVisibleText();
+      const decision = decideReadingTrigger({
+        now,
+        paperLoadedAt: paperLoadedAt.current,
+        idleMs: gazeTime,
+        visibleText,
+        scrollTop: container?.scrollTop ?? 0,
+        backtrackDistancePx: backtrackDistancePx.current,
+        lastTriggerAt: lastTriggerAt.current,
+        lastTriggerByText: lastTriggerByText.current,
+        config: config.triggerConfig,
+      });
 
       setDetection(prev => {
         let newState = prev.state;
-        let shouldMarkReady = false;
 
-        // 状态转换逻辑
+        // 状态转换逻辑。ready 代表本轮已经建议触发。
         if (prev.state === 'idle') {
-          // idle -> observing: 凝视超过 5 秒，且用户已滚动到新位置
-          if (gazeTime >= GAZE_TO_OBSERVING_MS && canTrigger) {
+          if (gazeTime >= config.triggerConfig.observingMs) {
             newState = 'observing';
           }
         } else if (prev.state === 'observing') {
-          // observing -> ready: 凝视超过 8 秒
-          if (gazeTime >= GAZE_TO_READY_MS) {
+          if (decision.shouldTrigger) {
             newState = 'ready';
-            shouldMarkReady = true;
           }
-          // observing -> idle: 有活动（gazeTime 被重置）
-          else if (gazeTime < GAZE_TO_OBSERVING_MS) {
+          else if (gazeTime < config.triggerConfig.observingMs) {
             newState = 'idle';
           }
         } else if (prev.state === 'ready') {
-          // ready -> idle: 有新活动时回到 idle
-          if (gazeTime < GAZE_TO_OBSERVING_MS) {
+          if (gazeTime < config.triggerConfig.observingMs) {
             newState = 'idle';
           }
         }
 
         const stateChanged = newState !== prev.state;
+        const shouldEmitTrigger = decision.shouldTrigger && newState === 'ready' && prev.state !== 'ready';
 
-        // 在状态变为 ready 时，记录滚动位置并标记
-        if (shouldMarkReady && container) {
-          lastReadyScrollPos.current = container.scrollTop;
-          hasScrolledAfterReady.current = false;
-        }
-
-        // 获取文本（仅在状态变为 ready 时）
-        let focusedText = prev.focusedText;
-        if (stateChanged && newState === 'ready') {
-          focusedText = config.getVisibleText();
+        if (shouldEmitTrigger) {
+          lastTriggerAt.current = now;
+          lastTriggerByText.current[decision.textSignature] = now;
+          backtrackDistancePx.current = 0;
         }
 
         return {
           state: newState,
           gazeTime,
           stateJustChanged: stateChanged,
-          focusedText,
+          focusedText: shouldEmitTrigger ? decision.text : prev.focusedText,
+          triggerId: shouldEmitTrigger ? prev.triggerId + 1 : prev.triggerId,
+          triggerType: shouldEmitTrigger ? decision.triggerType ?? null : prev.triggerType,
+          triggerReason: shouldEmitTrigger ? decision.reason : prev.triggerReason,
         };
       });
     }, 200); // 每 200ms 检测一次

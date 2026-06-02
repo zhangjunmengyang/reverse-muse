@@ -5,22 +5,22 @@ Test fixtures for unit tests
 
 import pytest
 
-from apps.backend.domains.reading_hub.core.entities import (
-    ReadingContext,
-    UserAction,
-    ReadingPosition,
-    TriggerType,
+from apps.backend.domains.insight_hub.core.entities import (
+    BubbleInsight,
+    InsightContext,
+    InsightStatus,
+    InsightType,
 )
 from apps.backend.domains.memory_hub.core.entities import (
     MemoryChunk,
     MemoryMetadata,
     MemorySource,
 )
-from apps.backend.domains.insight_hub.core.entities import (
-    BubbleInsight,
-    InsightContext,
-    InsightType,
-    InsightStatus,
+from apps.backend.domains.reading_hub.core.entities import (
+    ReadingContext,
+    ReadingPosition,
+    TriggerType,
+    UserAction,
 )
 
 

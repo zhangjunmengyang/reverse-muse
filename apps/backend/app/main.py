@@ -11,10 +11,12 @@ from fastapi.responses import JSONResponse
 
 from apps.backend.app.core.config import get_settings
 from apps.backend.app.routes.v1 import router as v1_router
+from apps.backend.infrastructure.db import close_sqlite_store
 from apps.backend.infrastructure.db.connection import (
     close_db,
     initialize_schema,
 )
+from apps.backend.infrastructure.db.repository_factory import use_surrealdb
 
 settings = get_settings()
 
@@ -26,19 +28,25 @@ async def lifespan(app: FastAPI):
     logger = structlog.get_logger(__name__)
     logger.info("Starting", service=settings.project_name)
 
-    try:
-        # Initialize database schema
-        await initialize_schema()
-        logger.info("Database initialized")
-    except Exception as e:
-        logger.error("Database initialization failed", error=str(e))
-        logger.warning("Application will start without database")
+    if use_surrealdb():
+        try:
+            await initialize_schema()
+            logger.info("SurrealDB initialized")
+        except Exception as e:
+            logger.error("Database initialization failed", error=str(e))
+            logger.warning("Application will start without database")
+    else:
+        settings.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Using local SQLite database", path=str(settings.sqlite_db_path))
 
     yield
 
     # Shutdown
     logger.info("Shutting down")
-    await close_db()
+    if use_surrealdb():
+        await close_db()
+    else:
+        close_sqlite_store()
 
 
 def create_application() -> FastAPI:

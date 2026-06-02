@@ -11,6 +11,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def default_project_root() -> Path:
+    """Return the repository root from this config module path."""
+    return Path(__file__).parent.parent.parent.parent.parent
+
+
 class Settings(BaseSettings):
     """Application configuration"""
 
@@ -42,6 +47,8 @@ class Settings(BaseSettings):
     ])
 
     # Database (SurrealDB)
+    database_provider: str = Field(default="sqlite", alias="DATABASE_PROVIDER")
+    sqlite_path: Optional[Path] = Field(default=None, alias="SQLITE_PATH")
     surreal_url: str = Field(default="ws://localhost:8000/rpc", alias="SURREALDB_URL")
     surreal_namespace: str = Field(default="reverse_muse", alias="SURREALDB_NAMESPACE")
     surreal_database: str = Field(default="main", alias="SURREALDB_DATABASE")
@@ -51,7 +58,7 @@ class Settings(BaseSettings):
     # File paths
     # __file__ = apps/backend/app/core/config.py
     # 往上 5 级到达项目根目录: config.py -> core -> app -> backend -> apps -> root
-    project_root: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent.parent.parent)
+    project_root: Path = Field(default_factory=default_project_root)
 
     @property
     def data_dir(self) -> Path:
@@ -69,11 +76,22 @@ class Settings(BaseSettings):
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
 
+    @property
+    def sqlite_db_path(self) -> Path:
+        return self.sqlite_path or self.data_dir / "reverse_muse.sqlite"
+
     # LLM Configuration
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
+
+    # Optional OpenAI-compatible LLM override, separate from embeddings.
+    llm_api_key: Optional[str] = Field(default=None, alias="LLM_API_KEY")
+    llm_base_url: Optional[str] = Field(default=None, alias="LLM_BASE_URL")
+    llm_default_headers: Optional[str] = Field(default=None, alias="LLM_DEFAULT_HEADERS")
+    maas_user_email: Optional[str] = Field(default=None, alias="MAAS_USER_EMAIL")
+    maas_app_id: Optional[str] = Field(default=None, alias="MAAS_APP_ID")
 
     default_llm_provider: str = "openai"
     default_llm_model: str = "gpt-4o-mini"
@@ -81,6 +99,10 @@ class Settings(BaseSettings):
     # Embedding
     default_embedding_model: str = "text-embedding-3-small"
     default_embedding_provider: str = "openai"
+    embedding_api_key: Optional[str] = Field(default=None, alias="EMBEDDING_API_KEY")
+    embedding_base_url: Optional[str] = Field(default=None, alias="EMBEDDING_BASE_URL")
+    embedding_dimension: int = Field(default=1536, alias="EMBEDDING_DIMENSION")
+    embedding_encoding_format: str = Field(default="float", alias="EMBEDDING_ENCODING_FORMAT")
 
     # PDF Processing
     chunk_size: int = 500
@@ -97,6 +119,7 @@ class Settings(BaseSettings):
 
     # LLM Behavior
     llm_temperature: float = 0.7
+    llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
     llm_timeout_seconds: int = 60
     base_confidence: float = 0.75  # Raised from 0.7 so more insights pass threshold
 

@@ -8,6 +8,7 @@ Phase 1 核心特性：
 - 信息增量评估：只在真正有价值时才开口
 """
 
+import json
 from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
@@ -15,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from apps.backend.app.core.config import get_settings
+from apps.backend.infrastructure.openai_compat import normalize_openai_base_url
 
 logger = structlog.get_logger(__name__)
 
@@ -69,6 +71,28 @@ INSIGHT_PROMPT_TEMPLATE = """用户正在阅读一篇研究论文，正在关注
 直接输出你的洞察，或者输出 [SILENCE]。"""
 
 
+def build_llm_default_headers(
+    user_email: Optional[str],
+    app_id: Optional[str],
+    headers_json: Optional[str],
+) -> Optional[Dict[str, str]]:
+    """Build default headers for OpenAI-compatible LLM calls."""
+    headers: Dict[str, str] = {}
+
+    if headers_json:
+        parsed = json.loads(headers_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM_DEFAULT_HEADERS must be a JSON object")
+        headers.update({str(key): str(value) for key, value in parsed.items()})
+
+    if user_email:
+        headers["x-maas-user-email"] = user_email
+    if app_id:
+        headers["x-maas-app-id"] = app_id
+
+    return headers or None
+
+
 class LLMService:
     """
     Unified LLM service using LangChain.
@@ -81,19 +105,32 @@ class LLMService:
     def __init__(self):
         self.settings = get_settings()
         self._client: Optional[ChatOpenAI] = None
+        api_key = self.settings.llm_api_key or self.settings.openai_api_key
+        base_url = normalize_openai_base_url(
+            self.settings.llm_base_url or self.settings.openai_base_url
+        )
+        default_headers = build_llm_default_headers(
+            user_email=self.settings.maas_user_email,
+            app_id=self.settings.maas_app_id,
+            headers_json=self.settings.llm_default_headers,
+        )
 
-        if self.settings.openai_api_key:
+        if api_key:
             self._client = ChatOpenAI(
                 model=self.settings.default_llm_model,
                 temperature=self.settings.llm_temperature,
-                openai_api_key=self.settings.openai_api_key,
-                openai_api_base=self.settings.openai_base_url,
+                api_key=api_key,
+                base_url=base_url,
+                default_headers=default_headers,
+                max_completion_tokens=self.settings.llm_max_tokens,
                 timeout=self.settings.llm_timeout_seconds,
             )
             logger.info(
                 "LangChain LLM client initialized",
                 model=self.settings.default_llm_model,
-                base_url=self.settings.openai_base_url,
+                base_url=base_url,
+                has_default_headers=bool(default_headers),
+                max_tokens=self.settings.llm_max_tokens,
             )
 
     async def generate_insight(
@@ -116,7 +153,8 @@ class LLMService:
         """
         if not self._client:
             raise RuntimeError(
-                "LLM provider not configured. Please set OPENAI_API_KEY in .env"
+                "LLM provider not configured. "
+                "Please set LLM_API_KEY or OPENAI_API_KEY in .env"
             )
 
         memory_context = self._format_memory_context(related_memories)

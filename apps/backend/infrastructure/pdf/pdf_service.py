@@ -7,11 +7,11 @@ Handles PDF upload, text extraction, and chunking.
 import re
 import unicodedata
 from datetime import datetime
-from typing import List, Optional
 from pathlib import Path
+from typing import List, Optional
 
-import structlog
 import fitz  # PyMuPDF
+import structlog
 
 from apps.backend.app.core.config import get_settings
 
@@ -70,9 +70,11 @@ class PDFService:
         # Extract PDF metadata
         try:
             doc = fitz.open(pdf_path)
+            title = doc.metadata.get("title") or filename
+            author = doc.metadata.get("author") or "Unknown"
             metadata = {
-                "title": doc.metadata.get("title", filename),
-                "author": doc.metadata.get("author", "Unknown"),
+                "title": title,
+                "author": author,
                 "page_count": len(doc),
                 "created_at": datetime.utcnow(),
             }

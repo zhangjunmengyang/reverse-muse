@@ -18,7 +18,7 @@ from typing import List, Optional
 import structlog
 
 from apps.backend.domains.memory_hub.core.entities import MemoryChunk
-from apps.backend.infrastructure.db import SurrealMemoryChunkRepository
+from apps.backend.infrastructure.db.repository_factory import create_memory_chunk_repository
 from apps.backend.infrastructure.embedding import get_embedding_service
 from apps.backend.infrastructure.rag.types import (
     RetrievalConfig,
@@ -109,7 +109,7 @@ class DenseRetrievalStrategy(RetrievalStrategy):
         start_time = time.time()
 
         # 获取用户的所有 chunks
-        repo = SurrealMemoryChunkRepository()
+        repo = create_memory_chunk_repository()
         all_chunks = await repo.list_by_user(user_id=context.user_id)
 
         if not all_chunks:

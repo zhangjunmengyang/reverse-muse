@@ -4,6 +4,7 @@ Reading Hub - Domain Services
 Business logic for managing reading contexts and triggers.
 """
 
+from typing import List
 
 from apps.backend.domains.reading_hub.core.entities import (
     ReadingContext,
@@ -42,3 +43,31 @@ class ReadingContextService:
             text_snippet=action.reading_position.text_snippet,
         )
         context.update_position(position)
+
+    def record_action(
+        self,
+        context: ReadingContext,
+        action: UserAction,
+    ) -> None:
+        """Record a user action and keep the current position in sync."""
+        self.record_action_and_update_position(context, action)
+
+    def is_session_active(
+        self,
+        context: ReadingContext,
+        timeout_seconds: int = 300,
+    ) -> bool:
+        """Return whether the reading context has recent activity."""
+        return not context.is_stale(timeout_seconds=timeout_seconds)
+
+    def cleanup_stale_contexts(
+        self,
+        contexts: List[ReadingContext],
+        timeout_seconds: int = 300,
+    ) -> List[str]:
+        """Return stable identifiers for stale contexts."""
+        return [
+            context.id or context.session_id
+            for context in contexts
+            if context.is_stale(timeout_seconds=timeout_seconds)
+        ]

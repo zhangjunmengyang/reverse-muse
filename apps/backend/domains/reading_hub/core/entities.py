@@ -77,8 +77,26 @@ class ReadingContext:
         """Get the current reading position"""
         return self.current_position
 
-    def update_position(self, position: ReadingPosition) -> None:
-        """Update the current reading position"""
+    def update_position(
+        self,
+        position: Optional[ReadingPosition] = None,
+        *,
+        paper_id: Optional[str] = None,
+        page_number: Optional[int] = None,
+        bbox: Optional[Dict[str, float]] = None,
+        text_snippet: Optional[str] = None,
+    ) -> None:
+        """Update the current reading position."""
+        if position is None:
+            if paper_id is None or page_number is None:
+                raise ValueError("paper_id and page_number are required")
+            position = ReadingPosition(
+                paper_id=paper_id,
+                page_number=page_number,
+                bbox=bbox,
+                text_snippet=text_snippet,
+            )
+
         self.current_position = position
         self.last_activity_at = datetime.utcnow()
 

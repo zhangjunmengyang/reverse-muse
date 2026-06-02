@@ -37,6 +37,8 @@ from apps.backend.domains.insight_hub.use_cases.generate_insight import (
 from apps.backend.domains.memory_hub.core.entities import MemoryChunk, MemoryMetadata
 from apps.backend.domains.reading_hub.core.entities import (
     ReadingPosition as DomainReadingPosition,
+)
+from apps.backend.domains.reading_hub.core.entities import (
     TriggerType,
     UserAction,
 )
@@ -49,10 +51,10 @@ from apps.backend.domains.reading_hub.use_cases.record_user_action import (
 from apps.backend.domains.reading_hub.use_cases.start_reading_session import (
     StartReadingSessionUseCase,
 )
-from apps.backend.infrastructure.db import (
-    SurrealInsightRepository,
-    SurrealMemoryChunkRepository,
-    SurrealReadingContextRepository,
+from apps.backend.infrastructure.db.repository_factory import (
+    create_insight_repository,
+    create_memory_chunk_repository,
+    create_reading_context_repository,
 )
 from apps.backend.infrastructure.embedding import get_embedding_service
 from apps.backend.infrastructure.llm import get_llm_service
@@ -93,10 +95,10 @@ async def get_dependencies():
     This is a simplified version that doesn't properly handle async dependencies,
     but works for MVP purposes.
     """
-    # Repositories (they get DB connection internally)
-    context_repo = SurrealReadingContextRepository()
-    memory_repo = SurrealMemoryChunkRepository()
-    insight_repo = SurrealInsightRepository()
+    # Repositories (provider selected by DATABASE_PROVIDER, SQLite by default)
+    context_repo = create_reading_context_repository()
+    memory_repo = create_memory_chunk_repository()
+    insight_repo = create_insight_repository()
 
     # Services
     llm_service = get_llm_service()
@@ -343,7 +345,7 @@ async def upload_pdf(
         chunks_data = pdf_service.extract_text_and_chunk(
             pdf_path=pdf_path,
             paper_id=paper_id,
-            paper_title=metadata.get("title", file.filename),
+            paper_title=metadata.get("title") or file.filename,
             user_id=actual_user_id,
         )
 
@@ -356,7 +358,7 @@ async def upload_pdf(
         for i, chunk_data in enumerate(chunks_data):
             chunk_metadata = MemoryMetadata(
                 paper_id=paper_id,
-                paper_title=metadata.get("title", file.filename),
+                paper_title=metadata.get("title") or file.filename,
                 page_number=chunk_data["page_number"],
             )
             chunk = MemoryChunk(
@@ -379,7 +381,10 @@ async def upload_pdf(
             filename=file.filename,
             page_count=metadata.get("page_count", 0),
             chunk_count=len(chunks_data),
-            message=f"PDF uploaded successfully. Extracted {len(chunks_data)} text chunks with embeddings.",
+            message=(
+                "PDF uploaded successfully. "
+                f"Extracted {len(chunks_data)} text chunks with embeddings."
+            ),
         )
     except HTTPException:
         raise
@@ -460,6 +465,29 @@ async def load_library_paper(
     logger.info("Loading paper from library", paper_id=request.paper_id, user_id=request.user_id)
 
     try:
+        existing_chunks = await memory_repo.list_by_paper(
+            user_id=request.user_id,
+            paper_id=request.paper_id,
+        )
+        if existing_chunks:
+            metadata = read_pdf_metadata(pdf_path)
+            title = existing_chunks[0].metadata.paper_title or metadata["title"]
+            logger.info(
+                "Paper already loaded, reusing existing chunks",
+                paper_id=request.paper_id,
+                chunks=len(existing_chunks),
+            )
+            return LoadPaperResponse(
+                paper_id=request.paper_id,
+                title=title,
+                page_count=metadata["page_count"],
+                chunk_count=len(existing_chunks),
+                message=(
+                    f"Paper already loaded. Reusing {len(existing_chunks)} "
+                    "existing text chunks."
+                ),
+            )
+
         doc = fitz.open(pdf_path)
         title = doc.metadata.get("title") or request.paper_id
         page_count = len(doc)
@@ -518,7 +546,10 @@ async def load_library_paper(
             title=title,
             page_count=page_count,
             chunk_count=chunks_created,
-            message=f"Successfully loaded {title} with {chunks_created} text chunks and embeddings.",
+            message=(
+                f"Successfully loaded {title} "
+                f"with {chunks_created} text chunks and embeddings."
+            ),
         )
     except HTTPException:
         raise

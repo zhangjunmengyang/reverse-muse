@@ -3,15 +3,15 @@ Schemas package
 """
 
 from apps.backend.app.schemas.common import (
-    ReadingPosition,
-    UserActionCreate,
-    StartReadingSessionRequest,
-    ReadingContextResponse,
     InsightResponse,
     InsightsListResponse,
-    UserActionResponse,
-    PDFUploadResponse,
     PDFMetadata,
+    PDFUploadResponse,
+    ReadingContextResponse,
+    ReadingPosition,
+    StartReadingSessionRequest,
+    UserActionCreate,
+    UserActionResponse,
 )
 
 __all__ = [

@@ -34,7 +34,10 @@ class BaseSurrealRepository(ABC, Generic[T]):
                 result = await db.create(self.table_name, data)
                 if result and isinstance(result, dict):
                     self._set_entity_id(entity, result.get("id"))
-                logger.debug(f"{self.table_name} entity saved", entity_id=self._get_entity_id(entity))
+                logger.debug(
+                    f"{self.table_name} entity saved",
+                    entity_id=self._get_entity_id(entity),
+                )
         except Exception as e:
             logger.error("Save failed", error=str(e), error_type=type(e).__name__)
             raise

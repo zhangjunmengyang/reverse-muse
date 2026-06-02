@@ -16,12 +16,15 @@ import {
   Plus,
   AlertCircle,
   CheckCircle,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import type { Paper, Insight } from '@/lib/types';
 import { NeuralOrb } from '@/components/NeuralOrb';
 import { useGazeDetection, type GazeState } from '@/hooks/useGazeDetection';
+import { useReadingTriggerConfig } from '@/hooks/useReadingTriggerConfig';
+import { shouldConsiderSelectionInsight } from '@/lib/readingTriggerPolicy';
 
 // Dynamically import PDF viewer to avoid SSR issues with canvas
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
@@ -65,6 +68,7 @@ function ReadingPageContent() {
   const searchParams = useSearchParams();
   const showUploadOnMount = searchParams?.get('upload') === 'true';
   const showDebug = searchParams?.get('debug') === 'true';
+  const triggerConfig = useReadingTriggerConfig();
 
   // State
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -115,6 +119,13 @@ function ReadingPageContent() {
     rightClicked: false,
   });
 
+  const clearDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+  }, []);
+
   // ============================================
   // 凝视检测 (Gaze Detection)
   // 简化逻辑：5秒无活动 -> observing, 8秒无活动 -> ready -> 触发洞察
@@ -126,35 +137,41 @@ function ReadingPageContent() {
   // 获取当前可见文本的配置
   const gazeConfig = useMemo(() => ({
     getVisibleText: () => getVisibleTextRef.current(),
-  }), []);
+    triggerConfig,
+  }), [triggerConfig]);
 
   // 凝视检测 hook
   const gazeDetection = useGazeDetection(scrollContainerRef, gazeConfig);
 
   // 凝视触发洞察
   const lastGazeStateRef = useRef<GazeState>('idle');
+  const lastPassiveTriggerIdRef = useRef(0);
 
   useEffect(() => {
-    const { state, stateJustChanged, focusedText } = gazeDetection;
+    const { state, stateJustChanged, focusedText, triggerId, triggerType, triggerReason } = gazeDetection;
 
     // Debug 日志
-    if (stateJustChanged) {
+    if (showDebug && stateJustChanged) {
       console.log('[Gaze] 状态变化:', lastGazeStateRef.current, '->', state, 'focusedText:', focusedText.substring(0, 50));
     }
 
-    // 状态变为 ready 时触发洞察
-    if (stateJustChanged && state === 'ready' && lastGazeStateRef.current !== 'ready') {
-      console.log('[Gaze] Ready 状态触发! contextId:', contextId, 'textLen:', focusedText.length);
-      if (contextId && focusedText.length > 30) {
-        console.log('[Gaze] 调用 triggerInsight...');
-        triggerInsightRef.current(focusedText, 'linger');
+    // 策略模块发出一次性 trigger event 时触发洞察。
+    if (triggerId > lastPassiveTriggerIdRef.current) {
+      lastPassiveTriggerIdRef.current = triggerId;
+      if (showDebug) {
+        console.log('[Gaze] 策略触发:', { triggerType, triggerReason, contextId, textLen: focusedText.length });
+      }
+      if (contextId && focusedText && triggerType) {
+        triggerInsightRef.current(focusedText, triggerType);
       } else {
-        console.log('[Gaze] 条件不满足 - contextId:', !!contextId, 'textLen:', focusedText.length);
+        if (showDebug) {
+          console.log('[Gaze] 条件不满足 - contextId:', !!contextId, 'textLen:', focusedText.length);
+        }
       }
     }
 
     lastGazeStateRef.current = state;
-  }, [gazeDetection.state, gazeDetection.stateJustChanged, gazeDetection.focusedText, contextId]);
+  }, [gazeDetection, contextId, showDebug]);
 
   // PDF 容器就绪回调
   const handleContainerReady = useCallback((container: HTMLDivElement, getVisibleText: () => string) => {
@@ -166,12 +183,26 @@ function ReadingPageContent() {
   // Library & Paper Management
   // ============================================
 
-  // Load paper library
-  useEffect(() => {
-    loadLibrary(true);
-  }, []);
+  const hasLoadedInitialLibraryRef = useRef(false);
 
-  const loadLibrary = async (autoSelectFirst: boolean = false) => {
+  const handleSelectPaper = useCallback(async (paper: Paper) => {
+    setSelectedPaper(paper);
+    setLoadingPaper(true);
+    setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
+    scrollContainerRef.current = null;
+
+    try {
+      await api.loadPaper(paper.paper_id, userId);
+      const session = await api.startSession(userId, paper.paper_id, sessionId);
+      setContextId(session.context_id);
+    } catch {
+      // Paper loading failed, user can retry
+    } finally {
+      setLoadingPaper(false);
+    }
+  }, [sessionId, userId]);
+
+  const loadLibrary = useCallback(async (autoSelectFirst: boolean = false) => {
     setLoadingLibrary(true);
     setLoadError(null);
     try {
@@ -181,14 +212,22 @@ function ReadingPageContent() {
 
       // Auto-select first paper on initial load
       if (autoSelectFirst && data.papers.length > 0 && !selectedPaper) {
-        handleSelectPaper(data.papers[0]);
+        await handleSelectPaper(data.papers[0]);
       }
     } catch {
       setLoadError('Failed to load paper library');
     } finally {
       setLoadingLibrary(false);
     }
-  };
+  }, [handleSelectPaper, selectedPaper]);
+
+  useEffect(() => {
+    if (hasLoadedInitialLibraryRef.current) {
+      return;
+    }
+    hasLoadedInitialLibraryRef.current = true;
+    loadLibrary(true);
+  }, [loadLibrary]);
 
   // Filter papers by search
   useEffect(() => {
@@ -280,27 +319,6 @@ function ReadingPageContent() {
   };
 
   // ============================================
-  // Paper Selection & Session
-  // ============================================
-
-  const handleSelectPaper = async (paper: Paper) => {
-    setSelectedPaper(paper);
-    setLoadingPaper(true);
-    setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
-    scrollContainerRef.current = null;
-
-    try {
-      await api.loadPaper(paper.paper_id, userId);
-      const session = await api.startSession(userId, paper.paper_id, sessionId);
-      setContextId(session.context_id);
-    } catch {
-      // Paper loading failed, user can retry
-    } finally {
-      setLoadingPaper(false);
-    }
-  };
-
-  // ============================================
   // Insight Generation
   // ============================================
 
@@ -327,22 +345,22 @@ function ReadingPageContent() {
     triggerType: 'selection' | 'linger' | 'backtrack',
     pageNumber: number = 1
   ) => {
-    console.log('[Insight] triggerInsight 被调用:', { triggerType, textLen: text?.length, contextId, bubbleState: bubble.state });
+    if (showDebug) {
+      console.log('[Insight] triggerInsight 被调用:', { triggerType, textLen: text?.length, contextId, bubbleState: bubble.state });
+    }
 
     if (!text || text.length < 10 || !contextId) {
-      console.log('[Insight] 提前返回: text 或 contextId 不满足');
+      if (showDebug) console.log('[Insight] 提前返回: text 或 contextId 不满足');
       return;
     }
     if (bubble.state === 'sensing' || bubble.state === 'engaged') {
-      console.log('[Insight] 提前返回: bubble 状态不允许', bubble.state);
+      if (showDebug) console.log('[Insight] 提前返回: bubble 状态不允许', bubble.state);
       return;
     }
 
-    if (dismissTimerRef.current) {
-      clearTimeout(dismissTimerRef.current);
-    }
+    clearDismissTimer();
 
-    console.log('[Insight] 设置 sensing 状态...');
+    if (showDebug) console.log('[Insight] 设置 sensing 状态...');
     setBubble({
       state: 'sensing',
       insight: null,
@@ -352,7 +370,7 @@ function ReadingPageContent() {
     });
 
     try {
-      console.log('[Insight] 调用 API...');
+      if (showDebug) console.log('[Insight] 调用 API...');
       const response = await api.recordAction(contextId, {
         trigger_type: triggerType,
         selected_text: text,
@@ -364,10 +382,12 @@ function ReadingPageContent() {
         },
       });
 
-      console.log('[Insight] API 响应:', { hasInsight: !!response.insight, insight: response.insight?.content?.substring(0, 50) });
+      if (showDebug) {
+        console.log('[Insight] API 响应:', { hasInsight: !!response.insight, insight: response.insight?.content?.substring(0, 50) });
+      }
 
       if (response.insight) {
-        console.log('[Insight] 设置 engaged 状态，开始流式输出');
+        if (showDebug) console.log('[Insight] 设置 engaged 状态，开始流式输出');
         setBubble({
           state: 'engaged',
           insight: response.insight,
@@ -383,16 +403,16 @@ function ReadingPageContent() {
         // 这里不再设置定时器
       } else {
         // AI decided to stay silent
-        console.log('[Insight] API 返回无洞察，隐藏气泡');
+        if (showDebug) console.log('[Insight] API 返回无洞察，隐藏气泡');
         setTimeout(() => {
           setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
         }, 300);
       }
     } catch (err) {
-      console.error('[Insight] API 错误:', err);
+      if (showDebug) console.error('[Insight] API 错误:', err);
       setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
     }
-  }, [contextId, selectedPaper, bubble.state, streamText]);
+  }, [clearDismissTimer, contextId, selectedPaper, bubble.state, streamText, showDebug]);
 
   // Store triggerInsight in ref for NeuralOrb callback
   const triggerInsightRef = useRef(triggerInsight);
@@ -403,10 +423,16 @@ function ReadingPageContent() {
   // ============================================
 
   const handleTextSelection = useCallback(async (selectedText: string) => {
-    console.log('[Selection] 文本选中:', selectedText?.substring(0, 30), 'len:', selectedText?.length, 'contextId:', contextId);
+    if (showDebug) {
+      console.log('[Selection] 文本选中:', selectedText?.substring(0, 30), 'len:', selectedText?.length, 'contextId:', contextId);
+    }
 
-    if (!selectedText || selectedText.length < 15 || !contextId) {
-      console.log('[Selection] 提前返回: 条件不满足');
+    if (
+      !selectedText
+      || !shouldConsiderSelectionInsight(selectedText, triggerConfig)
+      || !contextId
+    ) {
+      if (showDebug) console.log('[Selection] 提前返回: 条件不满足');
       return;
     }
 
@@ -416,21 +442,21 @@ function ReadingPageContent() {
       rightClicked: false,
     };
 
-    // Wait 1 second to check intent
+    // 主动优先：短暂等待用户是否是在复制/右键，然后介入。
     setTimeout(() => {
       const intent = selectionIntentRef.current;
-      console.log('[Selection] 1秒后检查意图:', intent);
+      if (showDebug) console.log('[Selection] 检查意图:', intent);
 
       // Skip if user copied or right-clicked (indicates different intent)
       if (intent.copied || intent.rightClicked) {
-        console.log('[Selection] 用户复制或右键，跳过');
+        if (showDebug) console.log('[Selection] 用户复制或右键，跳过');
         return;
       }
 
       // Check if selection is still active (use trim and normalize for comparison)
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
-        console.log('[Selection] 选区已消失，跳过');
+        if (showDebug) console.log('[Selection] 选区已消失，跳过');
         return;
       }
 
@@ -439,16 +465,19 @@ function ReadingPageContent() {
       const originalText = selectedText.trim().replace(/\s+/g, ' ');
 
       // Allow if the text is similar enough (contains most of the original)
-      if (currentText.length < 10 || !currentText.includes(originalText.substring(0, Math.min(50, originalText.length)))) {
-        console.log('[Selection] 选区已变化，跳过', { currentLen: currentText.length, originalLen: originalText.length });
+      if (
+        currentText.length < triggerConfig.technicalSelectionMinChars
+        || !currentText.includes(originalText.substring(0, Math.min(50, originalText.length)))
+      ) {
+        if (showDebug) console.log('[Selection] 选区已变化，跳过', { currentLen: currentText.length, originalLen: originalText.length });
         return;
       }
 
-      console.log('[Selection] 条件满足，触发 insight');
+      if (showDebug) console.log('[Selection] 条件满足，触发 insight');
 
       triggerInsightRef.current(selectedText, 'selection');
-    }, 1000);
-  }, [contextId]);
+    }, triggerConfig.selectionDelayMs);
+  }, [contextId, showDebug, triggerConfig]);
 
   // ============================================
   // Cleanup timer on unmount
@@ -456,22 +485,18 @@ function ReadingPageContent() {
 
   useEffect(() => {
     return () => {
-      if (dismissTimerRef.current) {
-        clearTimeout(dismissTimerRef.current);
-      }
+      clearDismissTimer();
     };
-  }, []);
+  }, [clearDismissTimer]);
 
   // ============================================
   // Bubble Dismiss
   // ============================================
 
   const dismissBubble = useCallback(() => {
-    if (dismissTimerRef.current) {
-      clearTimeout(dismissTimerRef.current);
-    }
+    clearDismissTimer();
     setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
-  }, []);
+  }, [clearDismissTimer]);
 
   // ============================================
   // Render
@@ -506,12 +531,20 @@ function ReadingPageContent() {
             <div className="w-9 h-9 rounded-xl bg-[var(--ghost-bg)] border border-[var(--ghost-border)] flex items-center justify-center">
               <Ghost className="w-4 h-4 text-[var(--accent-secondary)]" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <h1 className="font-display text-base font-semibold text-gradient">
                 Reverse Muse
               </h1>
               <p className="text-xs text-[var(--text-muted)]">Silent observer mode</p>
             </div>
+            <Link
+              href="/settings"
+              className="tooltip inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--ghost-border)] text-[var(--text-muted)] transition-colors hover:border-[var(--accent-primary)] hover:bg-[var(--ghost-bg)] hover:text-[var(--text-primary)]"
+              data-tooltip="Trigger tuning"
+              aria-label="Trigger tuning"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </Link>
           </div>
         </div>
 

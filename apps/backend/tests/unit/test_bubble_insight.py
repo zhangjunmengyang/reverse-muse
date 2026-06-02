@@ -69,7 +69,10 @@ def test_get_display_content_short(bubble_insight):
 
 def test_get_display_content_long(bubble_insight):
     """Test getting display content when content is long"""
-    long_content = "This is a very long insight that exceeds the maximum display length limit for the bubble component"
+    long_content = (
+        "This is a very long insight that exceeds the maximum display length limit "
+        "for the bubble component"
+    )
     bubble_insight.content = long_content
     bubble_insight.max_display_length = 50
 

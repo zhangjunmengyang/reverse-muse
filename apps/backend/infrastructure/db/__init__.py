@@ -1,5 +1,5 @@
 """
-Repository Implementations for SurrealDB
+Repository implementations.
 """
 
 from apps.backend.infrastructure.db.base_repository import BaseSurrealRepository
@@ -12,9 +12,19 @@ from apps.backend.infrastructure.db.memory_chunk_repository_impl import (
 from apps.backend.infrastructure.db.reading_context_repository_impl import (
     SurrealReadingContextRepository,
 )
+from apps.backend.infrastructure.db.sqlite_repository_impl import (
+    SQLiteInsightRepository,
+    SQLiteMemoryChunkRepository,
+    SQLiteReadingContextRepository,
+    close_sqlite_store,
+)
 
 __all__ = [
     "BaseSurrealRepository",
+    "close_sqlite_store",
+    "SQLiteInsightRepository",
+    "SQLiteMemoryChunkRepository",
+    "SQLiteReadingContextRepository",
     "SurrealInsightRepository",
     "SurrealMemoryChunkRepository",
     "SurrealReadingContextRepository",

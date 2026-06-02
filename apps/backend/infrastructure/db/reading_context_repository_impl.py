@@ -17,7 +17,10 @@ from apps.backend.infrastructure.db.base_repository import BaseSurrealRepository
 logger = structlog.get_logger(__name__)
 
 
-class SurrealReadingContextRepository(BaseSurrealRepository[ReadingContext], ReadingContextRepository):
+class SurrealReadingContextRepository(
+    BaseSurrealRepository[ReadingContext],
+    ReadingContextRepository,
+):
     """SurrealDB implementation of reading context repository."""
 
     table_name = "reading_contexts"
@@ -85,7 +88,9 @@ class SurrealReadingContextRepository(BaseSurrealRepository[ReadingContext], Rea
             "paper_id": entity.paper_id,
             "session_id": entity.session_id,
             "started_at": entity.started_at.isoformat() if entity.started_at else None,
-            "last_activity_at": entity.last_activity_at.isoformat() if entity.last_activity_at else None,
+            "last_activity_at": (
+                entity.last_activity_at.isoformat() if entity.last_activity_at else None
+            ),
             "reading_progress": entity.reading_progress,
         }
         if entity.current_position:

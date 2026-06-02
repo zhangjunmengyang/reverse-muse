@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, ArrowRight, Ghost } from 'lucide-react';
+import { BookOpen, ArrowRight, Ghost, SlidersHorizontal } from 'lucide-react';
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -52,7 +52,7 @@ export default function Home() {
           {/* Action Button */}
           <div
             className={`
-              flex justify-center
+              flex flex-col items-center justify-center gap-3 sm:flex-row
               ${mounted ? 'animate-slide-up stagger-2' : 'opacity-0'}
             `}
           >
@@ -63,6 +63,13 @@ export default function Home() {
               <BookOpen className="w-5 h-5" />
               <span>Enter</span>
               <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+            </Link>
+            <Link
+              href="/settings"
+              className="btn btn-ghost text-lg px-8 py-4"
+            >
+              <SlidersHorizontal className="w-5 h-5" />
+              <span>Tuning</span>
             </Link>
           </div>
         </div>

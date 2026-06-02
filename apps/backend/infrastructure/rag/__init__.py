@@ -30,21 +30,6 @@ Usage:
     )
 """
 
-from apps.backend.infrastructure.rag.types import (
-    RetrievalContext,
-    RetrievalResult,
-    RetrievalConfig,
-    RetrievalMode,
-    RetrievalOutput,
-)
-from apps.backend.infrastructure.rag.strategy import (
-    RetrievalStrategy,
-    DenseRetrievalStrategy,
-)
-from apps.backend.infrastructure.rag.reranker import (
-    Reranker,
-    NoOpReranker,
-)
 from apps.backend.infrastructure.rag.context_builder import (
     ContextBuilder,
     DefaultContextBuilder,
@@ -52,6 +37,21 @@ from apps.backend.infrastructure.rag.context_builder import (
 from apps.backend.infrastructure.rag.pipeline import (
     RAGPipeline,
     get_default_pipeline,
+)
+from apps.backend.infrastructure.rag.reranker import (
+    NoOpReranker,
+    Reranker,
+)
+from apps.backend.infrastructure.rag.strategy import (
+    DenseRetrievalStrategy,
+    RetrievalStrategy,
+)
+from apps.backend.infrastructure.rag.types import (
+    RetrievalConfig,
+    RetrievalContext,
+    RetrievalMode,
+    RetrievalOutput,
+    RetrievalResult,
 )
 
 __all__ = [

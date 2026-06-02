@@ -133,7 +133,11 @@ class SurrealDB:
                     data = await response.json()
                 except (json.JSONDecodeError, aiohttp.ContentTypeError) as e:
                     error_text = await response.text()
-                    logger.error("SurrealDB JSON parse error", error=str(e), response_text=error_text[:500])
+                    logger.error(
+                        "SurrealDB JSON parse error",
+                        error=str(e),
+                        response_text=error_text[:500],
+                    )
                     raise RuntimeError(f"SurrealDB response parse error: {e}")
 
                 if response.status >= 400:
@@ -151,7 +155,11 @@ class SurrealDB:
                 data = await response.json()
             except (json.JSONDecodeError, aiohttp.ContentTypeError) as e:
                 error_text = await response.text()
-                logger.error("SurrealDB JSON parse error", error=str(e), response_text=error_text[:500])
+                logger.error(
+                    "SurrealDB JSON parse error",
+                    error=str(e),
+                    response_text=error_text[:500],
+                )
                 raise RuntimeError(f"SurrealDB response parse error: {e}")
 
             if response.status >= 400:
@@ -214,7 +222,11 @@ class SurrealDB:
 
         return result if isinstance(result, list) else []
 
-    async def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def query(
+        self,
+        sql: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         """Alias for execute - compatibility with old code"""
         return await self.execute(sql, params)
 
