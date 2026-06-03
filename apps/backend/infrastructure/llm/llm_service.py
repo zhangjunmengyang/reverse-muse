@@ -42,6 +42,9 @@ SYSTEM_PROMPT = """你是 Reverse Muse，一个有灵魂的阅读伴侣。
 
 INSIGHT_PROMPT_TEMPLATE = """用户正在阅读一篇研究论文，正在关注以下内容。
 
+**触发方式:**
+{trigger_instruction}
+
 **关注的文本:**
 {selected_text}
 
@@ -69,6 +72,32 @@ INSIGHT_PROMPT_TEMPLATE = """用户正在阅读一篇研究论文，正在关注
 - 如果有知识关联，明确指出来源
 
 直接输出你的洞察，或者输出 [SILENCE]。"""
+
+
+def build_insight_prompt(
+    selected_text: str,
+    context_text: str,
+    memory_context: str,
+    trigger_type: str,
+) -> str:
+    """Build the prompt for insight generation."""
+    if trigger_type == "selection":
+        trigger_instruction = (
+            "用户主动选中了这段内容，通常代表用户正在询问或需要解释。"
+            "除非文本完全无意义或只是页码/标点，不要输出 [SILENCE]。"
+        )
+    else:
+        trigger_instruction = (
+            "这是系统根据阅读停留或回看主动触发的信号。"
+            "如果没有明确增量价值，可以输出 [SILENCE]。"
+        )
+
+    return INSIGHT_PROMPT_TEMPLATE.format(
+        trigger_instruction=trigger_instruction,
+        selected_text=selected_text,
+        context_text=context_text,
+        memory_context=memory_context,
+    )
 
 
 def build_llm_default_headers(
@@ -140,6 +169,7 @@ class LLMService:
         context_text: str,
         related_memories: List[Dict[str, Any]],
         reading_position: Dict[str, Any],
+        trigger_type: str = "linger",
     ) -> Tuple[str, float]:
         """
         Generate an AI insight based on user action and context.
@@ -158,10 +188,11 @@ class LLMService:
             )
 
         memory_context = self._format_memory_context(related_memories)
-        prompt = INSIGHT_PROMPT_TEMPLATE.format(
+        prompt = build_insight_prompt(
             selected_text=selected_text,
             context_text=context_text,
             memory_context=memory_context,
+            trigger_type=trigger_type,
         )
 
         messages = [

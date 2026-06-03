@@ -4,6 +4,8 @@ import React, { useState, useRef, useEffect, useCallback, forwardRef, useImperat
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 
+import { shouldForwardPdfSelection } from '@/lib/pdfSelectionPolicy';
+
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 
@@ -13,6 +15,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 export interface PDFViewerProps {
   fileUrl: string;
   onTextSelect?: (selectedText: string) => void;
+  selectionMinChars?: number;
   onPageClick?: () => void;
   onScroll?: (scrollTop: number) => void;
   /** 回调方式获取容器和文本（用于凝视检测） */
@@ -28,7 +31,14 @@ export interface PDFViewerHandle {
 }
 
 const PDFViewer = forwardRef<PDFViewerHandle, PDFViewerProps>(function PDFViewer(
-  { fileUrl, onTextSelect, onPageClick, onScroll, onContainerReady },
+  {
+    fileUrl,
+    onTextSelect,
+    selectionMinChars = 15,
+    onPageClick,
+    onScroll,
+    onContainerReady,
+  },
   ref
 ) {
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -101,7 +111,7 @@ const PDFViewer = forwardRef<PDFViewerHandle, PDFViewerProps>(function PDFViewer
         if (!selection || selection.isCollapsed) return;
 
         const text = selection.toString().trim();
-        if (text && text.length >= 15 && onTextSelect) {
+        if (text && shouldForwardPdfSelection(text, selectionMinChars) && onTextSelect) {
           onTextSelect(text);
         }
       }, 300);
@@ -114,7 +124,7 @@ const PDFViewer = forwardRef<PDFViewerHandle, PDFViewerProps>(function PDFViewer
         clearTimeout(selectionTimeoutRef.current);
       }
     };
-  }, [onTextSelect]);
+  }, [onTextSelect, selectionMinChars]);
 
   // Handle scroll for backtrack detection
   useEffect(() => {

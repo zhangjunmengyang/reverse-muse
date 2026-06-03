@@ -57,6 +57,11 @@ class StubInsightUseCase:
         return None
 
 
+class TimeoutInsightUseCase:
+    async def execute(self, **kwargs):
+        raise RuntimeError("Request timed out.")
+
+
 async def test_backtrack_action_triggers_insight_generation():
     context = ReadingContext(
         id="context_1",
@@ -88,3 +93,35 @@ async def test_backtrack_action_triggers_insight_generation():
     assert context_repo.saved
     assert insight_use_case.called
     assert insight_use_case.action.trigger_type == TriggerType.BACKTRACK
+
+
+async def test_insight_timeout_keeps_action_recorded():
+    context = ReadingContext(
+        id="context_1",
+        user_id="user_1",
+        paper_id="paper_1",
+        session_id="session_1",
+    )
+    context_repo = StubContextRepository(context)
+    use_case = RecordUserActionUseCase(
+        context_repo=context_repo,
+        context_service=ReadingContextService(),
+        memory_repo=StubMemoryRepository(),
+        insight_use_case=TimeoutInsightUseCase(),
+    )
+    action = UserAction(
+        trigger_type=TriggerType.SELECTION,
+        reading_position=ReadingPosition(
+            paper_id="paper_1",
+            page_number=1,
+            text_snippet="attention",
+        ),
+        selected_text="attention",
+        context_text="attention",
+    )
+
+    insight = await use_case.execute(context_id="context_1", action=action)
+
+    assert insight is None
+    assert context_repo.saved
+    assert context.recent_actions[-1].selected_text == "attention"

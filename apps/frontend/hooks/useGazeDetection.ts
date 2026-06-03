@@ -237,6 +237,7 @@ export function useGazeDetection(
           lastTriggerAt.current = now;
           lastTriggerByText.current[decision.textSignature] = now;
           backtrackDistancePx.current = 0;
+          lastActivityTime.current = now;
         }
 
         return {

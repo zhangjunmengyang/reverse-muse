@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import { DEFAULT_READING_TRIGGER_CONFIG } from './readingTriggerConfig';
 import {
+  canRequestInsight,
   decideReadingTrigger,
   estimateDwellMs,
   normalizeReadingText,
@@ -143,6 +144,13 @@ test('filters low-value visible text', () => {
 test('actively considers compact technical selections', () => {
   assert.equal(shouldConsiderSelectionInsight('RAG pipeline'), true);
   assert.equal(shouldConsiderSelectionInsight('attention'), true);
+});
+
+test('allows compact technical selections to request insight', () => {
+  assert.equal(
+    canRequestInsight('attention', 'selection', DEFAULT_READING_TRIGGER_CONFIG),
+    true
+  );
 });
 
 test('uses custom selection length threshold', () => {

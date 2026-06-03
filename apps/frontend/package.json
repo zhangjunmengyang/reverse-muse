@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:trigger": "tsx lib/readingTriggerPolicy.test.ts",
+    "test:trigger": "tsx lib/readingTriggerPolicy.test.ts && tsx lib/pdfSelectionPolicy.test.ts",
     "typecheck": "tsc --noEmit --incremental false",
     "lint": "eslint app components hooks lib --max-warnings=0"
   },

@@ -6,6 +6,8 @@ Orchestrates recording user actions and triggers insight generation.
 
 from typing import Optional
 
+import structlog
+
 from apps.backend.domains.insight_hub.core.entities import BubbleInsight
 from apps.backend.domains.insight_hub.use_cases.generate_insight import (
     GenerateInsightUseCase,
@@ -18,6 +20,12 @@ from apps.backend.domains.reading_hub.services.domain_service import (
 )
 
 INSIGHT_TRIGGERS = {"selection", "linger", "backtrack"}
+logger = structlog.get_logger(__name__)
+
+
+def is_timeout_error(error: Exception) -> bool:
+    error_text = str(error).lower()
+    return isinstance(error, TimeoutError) or "timeout" in error_text or "timed out" in error_text
 
 
 class RecordUserActionUseCase:
@@ -65,9 +73,21 @@ class RecordUserActionUseCase:
             paper_id=context.paper_id,
         )
 
-        return await self.insight_use_case.execute(
-            user_id=context.user_id,
-            context_id=context.id,
-            action=action,
-            related_memories=related_memories,
-        )
+        try:
+            return await self.insight_use_case.execute(
+                user_id=context.user_id,
+                context_id=context.id,
+                action=action,
+                related_memories=related_memories,
+            )
+        except Exception as error:
+            if not is_timeout_error(error):
+                raise
+
+            logger.warning(
+                "Insight generation timed out; action remains recorded",
+                trigger_type=action.trigger_type.value,
+                context_id=context_id,
+                error=str(error),
+            )
+            return None

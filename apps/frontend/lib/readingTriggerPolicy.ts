@@ -4,6 +4,7 @@ import {
 } from './readingTriggerConfig';
 
 export type PassiveTriggerType = 'linger' | 'backtrack';
+export type InsightTriggerType = 'selection' | PassiveTriggerType;
 
 export type TriggerDecisionReason =
   | 'dense_text_dwell'
@@ -105,6 +106,18 @@ export function shouldConsiderSelectionInsightWithConfig(
   }
 
   return isDenseOrTechnicalText(normalized);
+}
+
+export function canRequestInsight(
+  text: string,
+  triggerType: InsightTriggerType,
+  config: ReadingTriggerConfig = DEFAULT_READING_TRIGGER_CONFIG
+): boolean {
+  if (triggerType === 'selection') {
+    return shouldConsiderSelectionInsightWithConfig(text, config);
+  }
+
+  return isHighSignalTextWithConfig(text, config);
 }
 
 export function estimateDwellMs(

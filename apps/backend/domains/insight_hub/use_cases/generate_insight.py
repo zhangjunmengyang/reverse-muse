@@ -14,6 +14,7 @@ Phase 2 重构：
 - 易于扩展到 GraphRAG 等复杂策略
 """
 
+import asyncio
 from typing import TYPE_CHECKING, List, Optional
 
 import structlog
@@ -142,16 +143,28 @@ class GenerateInsightUseCase:
         )
 
         # 调用 LLM 生成洞察（带沉默决策）
-        insight_content, confidence = await get_llm_service().generate_insight(
-            user_id=user_id,
-            selected_text=action.selected_text or "",
-            context_text=action.context_text or "",
-            related_memories=memories_for_llm,
-            reading_position={
-                "paper_id": action.reading_position.paper_id,
-                "page_number": action.reading_position.page_number,
-            },
-        )
+        try:
+            insight_content, confidence = await asyncio.wait_for(
+                get_llm_service().generate_insight(
+                    user_id=user_id,
+                    selected_text=action.selected_text or "",
+                    context_text=action.context_text or "",
+                    related_memories=memories_for_llm,
+                    reading_position={
+                        "paper_id": action.reading_position.paper_id,
+                        "page_number": action.reading_position.page_number,
+                    },
+                    trigger_type=action.trigger_type.value,
+                ),
+                timeout=settings.llm_timeout_seconds,
+            )
+        except TimeoutError as error:
+            logger.warning(
+                "LLM insight generation timed out",
+                timeout_seconds=settings.llm_timeout_seconds,
+                trigger_type=action.trigger_type.value,
+            )
+            raise TimeoutError("Request timed out.") from error
 
         # Phase 1 核心：检测沉默决策
         if insight_content == "[SILENCE]":

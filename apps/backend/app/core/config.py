@@ -119,8 +119,8 @@ class Settings(BaseSettings):
 
     # LLM Behavior
     llm_temperature: float = 0.7
-    llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
-    llm_timeout_seconds: int = 60
+    llm_max_tokens: int = Field(default=512, alias="LLM_MAX_TOKENS")
+    llm_timeout_seconds: int = Field(default=20, alias="LLM_TIMEOUT_SECONDS")
     base_confidence: float = 0.75  # Raised from 0.7 so more insights pass threshold
 
     # Logging

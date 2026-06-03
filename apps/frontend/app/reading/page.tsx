@@ -24,7 +24,10 @@ import type { Paper, Insight } from '@/lib/types';
 import { NeuralOrb } from '@/components/NeuralOrb';
 import { useGazeDetection, type GazeState } from '@/hooks/useGazeDetection';
 import { useReadingTriggerConfig } from '@/hooks/useReadingTriggerConfig';
-import { shouldConsiderSelectionInsight } from '@/lib/readingTriggerPolicy';
+import {
+  canRequestInsight,
+  shouldConsiderSelectionInsight,
+} from '@/lib/readingTriggerPolicy';
 
 // Dynamically import PDF viewer to avoid SSR issues with canvas
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
@@ -118,6 +121,11 @@ function ReadingPageContent() {
     copied: false,
     rightClicked: false,
   });
+  const insightInFlightRef = useRef(false);
+  const inFlightTriggerRef = useRef<'selection' | 'linger' | 'backtrack' | null>(null);
+  const insightRequestSeqRef = useRef(0);
+  const latestInsightRequestRef = useRef(0);
+  const [debugEvents, setDebugEvents] = useState<string[]>([]);
 
   const clearDismissTimer = useCallback(() => {
     if (dismissTimerRef.current) {
@@ -125,6 +133,13 @@ function ReadingPageContent() {
       dismissTimerRef.current = null;
     }
   }, []);
+
+  const addDebugEvent = useCallback((event: string) => {
+    if (!showDebug) return;
+
+    const timestamp = new Date().toLocaleTimeString();
+    setDebugEvents(prev => [`${timestamp} ${event}`, ...prev].slice(0, 8));
+  }, [showDebug]);
 
   // ============================================
   // 凝视检测 (Gaze Detection)
@@ -340,26 +355,62 @@ function ReadingPageContent() {
     return () => clearInterval(interval);
   }, []);
 
+  const showSelectionFallback = useCallback((text: string) => {
+    const fallback = '这段已经触发了，但模型暂时没有返回洞察。可以稍后重试，或选中更完整的一段。';
+    setStreamedContent(fallback);
+    setBubble({
+      state: 'engaged',
+      insight: null,
+      selectedText: text,
+      isStreaming: false,
+      triggerType: 'selection',
+    });
+  }, []);
+
   const triggerInsight = useCallback(async (
     text: string,
     triggerType: 'selection' | 'linger' | 'backtrack',
     pageNumber: number = 1
   ) => {
+    if (insightInFlightRef.current && triggerType !== 'selection') {
+      addDebugEvent(`[Insight] skipped in-flight ${triggerType}`);
+      if (showDebug) console.log('[Insight] 提前返回: 已有请求在进行');
+      return;
+    }
+
+    if (insightInFlightRef.current && inFlightTriggerRef.current === 'selection') {
+      addDebugEvent('[Insight] skipped selection in-flight');
+      if (showDebug) console.log('[Insight] 提前返回: selection 请求已在进行');
+      return;
+    }
+
+    if (insightInFlightRef.current && triggerType === 'selection') {
+      addDebugEvent(`[Insight] selection overrides ${inFlightTriggerRef.current}`);
+    }
+
     if (showDebug) {
       console.log('[Insight] triggerInsight 被调用:', { triggerType, textLen: text?.length, contextId, bubbleState: bubble.state });
     }
 
-    if (!text || text.length < 10 || !contextId) {
+    if (!text || !canRequestInsight(text, triggerType, triggerConfig) || !contextId) {
+      addDebugEvent(`[Insight] blocked ${triggerType} len=${text?.length || 0} context=${Boolean(contextId)}`);
       if (showDebug) console.log('[Insight] 提前返回: text 或 contextId 不满足');
       return;
     }
-    if (bubble.state === 'sensing' || bubble.state === 'engaged') {
+    if ((bubble.state === 'sensing' || bubble.state === 'engaged') && triggerType !== 'selection') {
+      addDebugEvent(`[Insight] blocked bubble=${bubble.state}`);
       if (showDebug) console.log('[Insight] 提前返回: bubble 状态不允许', bubble.state);
       return;
     }
 
     clearDismissTimer();
+    insightInFlightRef.current = true;
+    inFlightTriggerRef.current = triggerType;
+    const requestSeq = insightRequestSeqRef.current + 1;
+    insightRequestSeqRef.current = requestSeq;
+    latestInsightRequestRef.current = requestSeq;
 
+    addDebugEvent(`[Insight] request ${triggerType} len=${text.length}`);
     if (showDebug) console.log('[Insight] 设置 sensing 状态...');
     setBubble({
       state: 'sensing',
@@ -386,7 +437,13 @@ function ReadingPageContent() {
         console.log('[Insight] API 响应:', { hasInsight: !!response.insight, insight: response.insight?.content?.substring(0, 50) });
       }
 
+      if (requestSeq !== latestInsightRequestRef.current) {
+        addDebugEvent(`[Insight] stale response ${triggerType}`);
+        return;
+      }
+
       if (response.insight) {
+        addDebugEvent(`[Insight] speaking ${response.insight.content.length} chars`);
         if (showDebug) console.log('[Insight] 设置 engaged 状态，开始流式输出');
         setBubble({
           state: 'engaged',
@@ -403,16 +460,36 @@ function ReadingPageContent() {
         // 这里不再设置定时器
       } else {
         // AI decided to stay silent
+        addDebugEvent(`[Insight] silent ${triggerType}`);
         if (showDebug) console.log('[Insight] API 返回无洞察，隐藏气泡');
-        setTimeout(() => {
-          setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
-        }, 300);
+        if (triggerType === 'selection') {
+          showSelectionFallback(text);
+        } else {
+          setTimeout(() => {
+            setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
+          }, 300);
+        }
       }
     } catch (err) {
+      if (requestSeq !== latestInsightRequestRef.current) {
+        addDebugEvent(`[Insight] stale error ${triggerType}`);
+        return;
+      }
+
+      addDebugEvent(`[Insight] error ${err instanceof Error ? err.message : 'unknown'}`);
       if (showDebug) console.error('[Insight] API 错误:', err);
-      setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
+      if (triggerType === 'selection') {
+        showSelectionFallback(text);
+      } else {
+        setBubble({ state: 'hidden', insight: null, selectedText: '', isStreaming: false, triggerType: 'selection' });
+      }
+    } finally {
+      if (requestSeq === latestInsightRequestRef.current) {
+        insightInFlightRef.current = false;
+        inFlightTriggerRef.current = null;
+      }
     }
-  }, [clearDismissTimer, contextId, selectedPaper, bubble.state, streamText, showDebug]);
+  }, [addDebugEvent, clearDismissTimer, contextId, selectedPaper, bubble.state, streamText, showDebug, showSelectionFallback, triggerConfig]);
 
   // Store triggerInsight in ref for NeuralOrb callback
   const triggerInsightRef = useRef(triggerInsight);
@@ -426,12 +503,14 @@ function ReadingPageContent() {
     if (showDebug) {
       console.log('[Selection] 文本选中:', selectedText?.substring(0, 30), 'len:', selectedText?.length, 'contextId:', contextId);
     }
+    addDebugEvent(`[Selection] selected len=${selectedText?.length || 0} context=${Boolean(contextId)}`);
 
     if (
       !selectedText
       || !shouldConsiderSelectionInsight(selectedText, triggerConfig)
       || !contextId
     ) {
+      addDebugEvent('[Selection] blocked by policy/context');
       if (showDebug) console.log('[Selection] 提前返回: 条件不满足');
       return;
     }
@@ -449,6 +528,7 @@ function ReadingPageContent() {
 
       // Skip if user copied or right-clicked (indicates different intent)
       if (intent.copied || intent.rightClicked) {
+        addDebugEvent('[Selection] skipped copy/context-menu');
         if (showDebug) console.log('[Selection] 用户复制或右键，跳过');
         return;
       }
@@ -456,6 +536,7 @@ function ReadingPageContent() {
       // Check if selection is still active (use trim and normalize for comparison)
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
+        addDebugEvent('[Selection] skipped selection cleared');
         if (showDebug) console.log('[Selection] 选区已消失，跳过');
         return;
       }
@@ -469,15 +550,17 @@ function ReadingPageContent() {
         currentText.length < triggerConfig.technicalSelectionMinChars
         || !currentText.includes(originalText.substring(0, Math.min(50, originalText.length)))
       ) {
+        addDebugEvent('[Selection] skipped selection changed');
         if (showDebug) console.log('[Selection] 选区已变化，跳过', { currentLen: currentText.length, originalLen: originalText.length });
         return;
       }
 
+      addDebugEvent('[Selection] request insight');
       if (showDebug) console.log('[Selection] 条件满足，触发 insight');
 
       triggerInsightRef.current(selectedText, 'selection');
     }, triggerConfig.selectionDelayMs);
-  }, [contextId, showDebug, triggerConfig]);
+  }, [addDebugEvent, contextId, showDebug, triggerConfig]);
 
   // ============================================
   // Cleanup timer on unmount
@@ -510,6 +593,15 @@ function ReadingPageContent() {
         <div className="fixed bottom-4 right-4 z-50 p-3 rounded-lg bg-black/80 text-white text-xs font-mono">
           <div>State: <span className="text-green-400">{gazeDetection.state}</span></div>
           <div>Gaze: {(gazeDetection.gazeTime / 1000).toFixed(1)}s</div>
+          <div>Bubble: <span className="text-sky-300">{bubble.state}</span></div>
+          <div>In-flight: <span className="text-yellow-300">{inFlightTriggerRef.current || 'false'}</span></div>
+          <div className="mt-2 max-w-80 space-y-1">
+            {debugEvents.map((event, index) => (
+              <div key={`${event}-${index}`} className="truncate text-[10px] text-white/80">
+                {event}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -716,13 +808,14 @@ function ReadingPageContent() {
                 gazeDetection.state
               }
               visible={true}
-              message={bubble.state === 'engaged' ? (bubble.isStreaming ? streamedContent : bubble.insight?.content) : undefined}
+              message={bubble.state === 'engaged' ? (bubble.isStreaming ? streamedContent : bubble.insight?.content || streamedContent) : undefined}
               isStreaming={bubble.isStreaming}
               onDismiss={dismissBubble}
             />
             <PDFViewer
               fileUrl={api.getPdfUrl(selectedPaper.paper_id)}
               onTextSelect={handleTextSelection}
+              selectionMinChars={triggerConfig.technicalSelectionMinChars}
               onPageClick={dismissBubble}
               onContainerReady={handleContainerReady}
             />

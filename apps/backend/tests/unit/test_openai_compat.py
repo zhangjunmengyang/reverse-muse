@@ -2,7 +2,10 @@
 Tests for OpenAI-compatible provider configuration helpers.
 """
 
-from apps.backend.infrastructure.llm.llm_service import build_llm_default_headers
+from apps.backend.infrastructure.llm.llm_service import (
+    build_insight_prompt,
+    build_llm_default_headers,
+)
 from apps.backend.infrastructure.openai_compat import normalize_openai_base_url
 
 
@@ -49,3 +52,16 @@ def test_build_llm_default_headers_merges_json_and_maas_fields():
         "x-maas-user-email": "user@example.com",
         "x-maas-app-id": "qs-api",
     }
+
+
+def test_selection_prompt_discourages_silence():
+    """Explicit selections should ask the model to answer unless text is useless."""
+    prompt = build_insight_prompt(
+        selected_text="attention",
+        context_text="attention",
+        memory_context="",
+        trigger_type="selection",
+    )
+
+    assert "用户主动选中" in prompt
+    assert "不要输出 [SILENCE]" in prompt
